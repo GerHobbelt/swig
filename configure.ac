@@ -2429,7 +2429,7 @@ if test "$LUABIN"; then
   # look for the header files & set LUAFLAGS accordingly
   # will clear LUABIN if not present
   if test -n "$LUAINCLUDE"; then
-    AC_CHECK_FILE($LUAINCLUDE/lua.h,[LUAFLAGS="$ISYSTEM$LUAINCLUDE"],[LUABIN=])
+    AS_IF([test -f $LUAINCLUDE/lua.h,[LUAFLAGS="$ISYSTEM$LUAINCLUDE"],[LUABIN=]])
   else
     LUA_OK="1"
     CFLAGS_SAVED=$CFLAGS
@@ -2464,7 +2464,7 @@ if test "$LUABIN"; then
   lua_save_LIBS=$LIBS # the code seems to disrupt LIBS, so saving
 
   if test -n "$LUALIB"; then
-    AC_CHECK_FILE($LUALIB/liblua.a,[LUALINK="-L$LUALIB -llua"],[LUABIN=])
+    AS_IF([test -f $LUALIB/liblua.a,[LUALINK="-L$LUALIB -llua"],[LUABIN=]])
   else
     AC_SEARCH_LIBS(lua_close, [lua lua5.4 lua5.3 lua5.2 lua5.1 lua51 lua5.0 lua50], [LUALINK="-l$ac_lib"],[LUABIN=])
   fi

@@ -48,7 +48,7 @@ fi
 
 dnl Note: This could be replaced by AC_FUNC_SNPRINTF() in the autoconf macro archive
 AC_CACHE_CHECK([for C99 vsnprintf],ccache_cv_HAVE_C99_VSNPRINTF,[
-AC_TRY_RUN([
+AC_COMPILE_IFELSE([
 #include <sys/types.h>
 #include <stdarg.h>
 void foo(const char *format, ...) { 
