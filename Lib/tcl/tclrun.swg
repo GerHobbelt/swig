@@ -30,30 +30,30 @@
 
 /* Runtime API */
 
-#define SWIG_GetModule(clientdata)                      SWIG_Tcl_GetModule((Tcl_Interp *) (clientdata))	     
+#define SWIG_GetModule(clientdata)                      SWIG_Tcl_GetModule((Tcl_Interp *) (clientdata))
 #define SWIG_SetModule(clientdata, pointer)          	SWIG_Tcl_SetModule((Tcl_Interp *) (clientdata), pointer)
 
 
 /* Error manipulation */
 
-#define SWIG_ErrorType(code)                            SWIG_Tcl_ErrorType(code)                                      
+#define SWIG_ErrorType(code)                            SWIG_Tcl_ErrorType(code)
 #define SWIG_Error(code, msg)            		SWIG_Tcl_SetErrorMsg(interp, SWIG_Tcl_ErrorType(code), msg)
-#define SWIG_fail                        		goto fail						    
+#define SWIG_fail                        		goto fail
 
 
 /* Tcl-specific SWIG API */
 
-#define SWIG_Acquire(ptr)                               SWIG_Tcl_Acquire(ptr)                                     
-#define SWIG_MethodCommand                           	SWIG_Tcl_MethodCommand				       
-#define SWIG_Disown(ptr)                             	SWIG_Tcl_Disown(ptr)				       
-#define SWIG_ConvertPtrFromString(c, ptr, ty, flags) 	SWIG_Tcl_ConvertPtrFromString(interp, c, ptr, ty, flags)  
-#define SWIG_MakePtr(c, ptr, ty, flags)              	SWIG_Tcl_MakePtr(c, ptr, ty, flags)		       
-#define SWIG_PointerTypeFromString(c)                	SWIG_Tcl_PointerTypeFromString(c)			       
-#define SWIG_GetArgs                                 	SWIG_Tcl_GetArgs					       
-#define SWIG_GetConstantObj(key)                     	SWIG_Tcl_GetConstantObj(key)			       
-#define SWIG_ObjectConstructor                       	SWIG_Tcl_ObjectConstructor				       
-#define SWIG_Thisown(ptr)                            	SWIG_Tcl_Thisown(ptr)				       
-#define SWIG_ObjectDelete                            	SWIG_Tcl_ObjectDelete				       
+#define SWIG_Acquire(ptr)                               SWIG_Tcl_Acquire(ptr)
+#define SWIG_MethodCommand                           	SWIG_Tcl_MethodCommand
+#define SWIG_Disown(ptr)                             	SWIG_Tcl_Disown(ptr)
+#define SWIG_ConvertPtrFromString(c, ptr, ty, flags) 	SWIG_Tcl_ConvertPtrFromString(interp, c, ptr, ty, flags)
+#define SWIG_MakePtr(c, ptr, ty, flags)              	SWIG_Tcl_MakePtr(c, ptr, ty, flags)
+#define SWIG_PointerTypeFromString(c)                	SWIG_Tcl_PointerTypeFromString(c)
+#define SWIG_GetArgs                                 	SWIG_Tcl_GetArgs
+#define SWIG_GetConstantObj(key)                     	SWIG_Tcl_GetConstantObj(key)
+#define SWIG_ObjectConstructor                       	SWIG_Tcl_ObjectConstructor
+#define SWIG_Thisown(ptr)                            	SWIG_Tcl_Thisown(ptr)
+#define SWIG_ObjectDelete                            	SWIG_Tcl_ObjectDelete
 
 
 #define SWIG_TCL_DECL_ARGS_2(arg1, arg2)                (Tcl_Interp *interp SWIGUNUSED, arg1, arg2)
@@ -78,6 +78,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+void Tcl_SetConstResult(Tcl_Interp *interp, const char *result) {
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wcast-qual"
+  Tcl_SetResult(interp, (char *) result, TCL_STATIC);
+  #pragma GCC diagnostic pop
+}
 
 /* Object support */
 
@@ -129,7 +136,7 @@ SWIG_Tcl_ConvertPtrFromString(Tcl_Interp *interp, const char *c, void **ptr, swi
       return (flags & SWIG_POINTER_NO_NULL) ? SWIG_NullReferenceError : SWIG_OK;
 
     /* Empty string: not a pointer */
-    if (*c == 0) return SWIG_ERROR; 
+    if (*c == 0) return SWIG_ERROR;
 
     /* Hmmm. It could be an object name. */
 
@@ -258,14 +265,14 @@ SWIG_Tcl_NewPackedObj(void *ptr, int sz, swig_type_info *type) {
 }
 
 /* -----------------------------------------------------------------------------*
- *  Get type list 
+ *  Get type list
  * -----------------------------------------------------------------------------*/
 
-SWIGRUNTIME swig_module_info * 
+SWIGRUNTIME swig_module_info *
 SWIG_Tcl_GetModule(Tcl_Interp *interp) {
   const char *data;
   swig_module_info *ret = 0;
-  
+
   /* first check if pointer already created */
   data = Tcl_GetVar(interp, (char *)"swig_runtime_data_type_pointer" SWIG_RUNTIME_VERSION SWIG_TYPE_TABLE_NAME, TCL_GLOBAL_ONLY);
   if (data) {
@@ -323,7 +330,7 @@ SWIG_Tcl_MethodCommand(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
 
   objv = (Tcl_Obj **) _objv;
   if (objc < 2) {
-    Tcl_SetResult(interp, (char *) "wrong # args.", TCL_STATIC);
+    Tcl_SetConstResult(interp, (char *) "wrong # args.");
     return TCL_ERROR;
   }
   method = Tcl_GetStringFromObj(objv[1],NULL);
@@ -386,7 +393,7 @@ SWIG_Tcl_MethodCommand(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
     /* Check class methods for a match */
     if (strcmp(method,"cget") == 0) {
       if (objc < 3) {
-        Tcl_SetResult(interp, (char *) "wrong # args.", TCL_STATIC);
+        Tcl_SetConstResult(interp, (char *) "wrong # args.");
         return TCL_ERROR;
       }
       attrname = Tcl_GetStringFromObj(objv[2],NULL);
@@ -409,16 +416,16 @@ SWIG_Tcl_MethodCommand(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
       }
       if (strcmp(attrname, "-thisown") == 0) {
         if (SWIG_Thisown(inst->thisvalue)) {
-          Tcl_SetResult(interp,(char*)"1",TCL_STATIC);
+          Tcl_SetConstResult(interp,(char*)"1");
         } else {
-          Tcl_SetResult(interp,(char*)"0",TCL_STATIC);
+          Tcl_SetConstResult(interp,(char*)"0");
         }
         return TCL_OK;
       }
     } else if (strcmp(method, "configure") == 0) {
       int i;
       if (objc < 4) {
-        Tcl_SetResult(interp, (char *) "wrong # args.", TCL_STATIC);
+        Tcl_SetConstResult(interp, (char *) "wrong # args.");
         return TCL_ERROR;
       }
       i = 2;
@@ -446,15 +453,15 @@ SWIG_Tcl_MethodCommand(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
     if (numconf >= objc) {
       return TCL_OK;
     } else {
-      Tcl_SetResult(interp,(char *) "Invalid attribute name.", TCL_STATIC);
+      Tcl_SetConstResult(interp,(char *) "Invalid attribute name.");
       return TCL_ERROR;
     }
   }
   if (strcmp(method,"cget") == 0) {
-    Tcl_SetResult(interp,(char *) "Invalid attribute name.", TCL_STATIC);
+    Tcl_SetConstResult(interp,(char *) "Invalid attribute name.");
     return TCL_ERROR;
   }
-  Tcl_SetResult(interp, (char *) "Invalid method. Must be one of: configure cget -acquire -disown -delete", TCL_STATIC);
+  Tcl_SetConstResult(interp, (char *) "Invalid method. Must be one of: configure cget -acquire -disown -delete");
   cls = inst->classptr;
   bi = 0;
   while (cls) {
@@ -522,7 +529,7 @@ SWIG_Tcl_ObjectConstructor(ClientData clientData, Tcl_Interp *interp, int objc, 
   int               destroy = 1;
 
   if (!classptr) {
-    Tcl_SetResult(interp, (char *) "swig: internal runtime error. No class object defined.", TCL_STATIC);
+    Tcl_SetConstResult(interp, (char *) "swig: internal runtime error. No class object defined.");
     return TCL_ERROR;
   }
   cons = classptr->constructor;
@@ -562,11 +569,11 @@ SWIG_Tcl_ObjectConstructor(ClientData clientData, Tcl_Interp *interp, int objc, 
       newObj = Tcl_DuplicateObj(objv[thisarg]);
       if (!name) name = Tcl_GetStringFromObj(newObj,NULL);
     } else {
-      Tcl_SetResult(interp, (char *) "wrong # args.", TCL_STATIC);
+      Tcl_SetConstResult(interp, (char *) "wrong # args.");
       return TCL_ERROR;
     }
   } else {
-    Tcl_SetResult(interp, (char *) "No constructor available.", TCL_STATIC);
+    Tcl_SetConstResult(interp, (char *) "No constructor available.");
     return TCL_ERROR;
   }
   if (SWIG_Tcl_ConvertPtr(interp,newObj, (void **) &thisvalue, *(classptr->type), 0) != SWIG_OK) {
@@ -587,7 +594,7 @@ SWIG_Tcl_ObjectConstructor(ClientData clientData, Tcl_Interp *interp, int objc, 
 }
 
 /* -----------------------------------------------------------------------------*
- *   Get arguments 
+ *   Get arguments
  * -----------------------------------------------------------------------------*/
 SWIGRUNTIME int
 SWIG_Tcl_GetArgs(Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[], const char *fmt, ...) {
@@ -608,7 +615,7 @@ SWIG_Tcl_GetArgs(Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[], const char
     }
     if (argno >= (objc-1)) {
       if (!opt) {
-        Tcl_SetResult(interp, (char *) "Wrong number of arguments ", TCL_STATIC);
+        Tcl_SetConstResult(interp, (char *) "Wrong number of arguments ");
         goto argerror;
       } else {
         va_end(ap);
@@ -667,7 +674,7 @@ SWIG_Tcl_GetArgs(Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[], const char
   }
 
   if ((*c != ';') && ((objc-1) > argno)) {
-    Tcl_SetResult(interp, (char *) "Wrong # args.", TCL_STATIC);
+    Tcl_SetConstResult(interp, (char *) "Wrong # args.");
     goto argerror;
   }
   va_end(ap);
