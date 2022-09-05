@@ -846,6 +846,7 @@ public:
     Printf(f_wrappers, "#endif\n");
 
     if (shadow) {
+      Printf(f_shadow_py, "%s --coding:GBK -- \n\n", "#");
       Swig_banner_target_lang(f_shadow_py, "#");
 
       if (mod_docstring) {
