@@ -7,6 +7,8 @@
  *
  * ----------------------------------------------------------------------------- */
 
+#include <set>
+
 #if PY_VERSION_HEX < 0x02070000 /* 2.7.0 */
 # error "This version of SWIG only supports Python >= 2.7"
 #endif
@@ -288,6 +290,8 @@ swig_varlink_str(swig_varlinkobject *v) {
 
 SWIGINTERN void
 swig_varlink_dealloc(swig_varlinkobject *v) {
+//删除原有的资源释放机制
+/*
   swig_globalvar *var = v->vars;
   while (var) {
     swig_globalvar *n = var->next;
@@ -295,6 +299,7 @@ swig_varlink_dealloc(swig_varlinkobject *v) {
     free(var);
     var = n;
   }
+*/
 }
 
 SWIGINTERN PyObject *
@@ -410,11 +415,13 @@ SWIG_Python_newvarlink(void) {
   return ((PyObject*) result);
 }
 
+extern std::set<swig_globalvar *> Globals_var;
 SWIGINTERN void 
 SWIG_Python_addvarlink(PyObject *p, const char *name, PyObject *(*get_attr)(void), int (*set_attr)(PyObject *p)) {
   swig_varlinkobject *v = (swig_varlinkobject *) p;
   swig_globalvar *gv = (swig_globalvar *) malloc(sizeof(swig_globalvar));
   if (gv) {
+    Globals_var.insert(gv);
     size_t size = strlen(name)+1;
     gv->name = (char *)malloc(size);
     if (gv->name) {
@@ -498,7 +505,7 @@ SWIG_Python_ExceptionType(swig_type_info *desc) {
   return (klass ? klass : PyExc_RuntimeError);
 }
 
-
+extern std::set<SwigPyClientData *> Globals_ClientData;
 SWIGRUNTIME SwigPyClientData * 
 SwigPyClientData_New(PyObject* obj)
 {
@@ -506,6 +513,7 @@ SwigPyClientData_New(PyObject* obj)
     return 0;
   } else {
     SwigPyClientData *data = (SwigPyClientData *)malloc(sizeof(SwigPyClientData));
+    Globals_ClientData.insert(data);
     /* the klass element */
     data->klass = obj;
     Py_INCREF(data->klass);
@@ -524,6 +532,8 @@ SwigPyClientData_New(PyObject* obj)
         } else {
           Py_DECREF(data->newraw);
           Py_DECREF(data->klass);
+          if(!Globals_ClientData.empty() && Globals_ClientData.find(data) != Globals_ClientData.end())
+            Globals_ClientData.erase(data);
           free(data);
           return 0;
         }
@@ -1675,6 +1685,8 @@ SWIG_Python_GetModule(void *SWIGUNUSEDPARM(clientdata)) {
 SWIGRUNTIME void
 SWIG_Python_DestroyModule(PyObject *obj)
 {
+//原有的资源释放机制不能完全释放申请的内存
+/*
   swig_module_info *swig_module = (swig_module_info *) PyCapsule_GetPointer(obj, SWIGPY_CAPSULE_NAME);
   swig_type_info **types = swig_module->types;
   size_t i;
@@ -1693,7 +1705,36 @@ SWIG_Python_DestroyModule(PyObject *obj)
   Py_DECREF(SWIG_Python_TypeCache());
   Swig_TypeCache_global = NULL;
   Swig_Capsule_global = NULL;
+*/
 }
+
+//新添垃圾类用于资源释放
+static std::set<swig_globalvar *> Globals_var;
+static std::set<SwigPyClientData *> Globals_ClientData;
+class CGlobal{
+public:
+  CGlobal(){}
+  ~CGlobal(){
+    if(!Globals_var.empty()){
+      for(std::set<swig_globalvar*>::iterator it_var = Globals_var.begin(); it_var != Globals_var.end(); it_var++) {
+        free((*it_var)->name);
+        free(*it_var);
+      } 
+    }
+    if(!Globals_ClientData.empty()){
+      for(std::set<SwigPyClientData*>::iterator it_ClientData = Globals_ClientData.begin(); 
+        it_ClientData != Globals_ClientData.end(); it_ClientData++) SwigPyClientData_Del(*it_ClientData);
+    }
+    Py_DECREF(SWIG_This());
+    Swig_This_global = NULL;
+    Py_DECREF(SWIG_globals());
+    Swig_Globals_global = NULL;
+    Py_DECREF(SWIG_Python_TypeCache());
+    Swig_TypeCache_global = NULL;
+    Swig_Capsule_global = NULL;
+  }
+};
+static const CGlobal Global;
 
 SWIGRUNTIME void
 SWIG_Python_SetModule(swig_module_info *swig_module) {
