@@ -680,7 +680,7 @@ template<typename T> class SwigValueWrapper {
   SwigValueWrapper(const SwigValueWrapper<T>& rhs);
 public:
   SwigValueWrapper() : pointer(0) { }
-  SwigValueWrapper& operator=(const T& t) { SwigSmartPointer tmp(new T(t)); pointer = tmp; return *this; }
+  SwigValueWrapper& operator=(/*const*/ T& t) { SwigSmartPointer tmp(new T(t)); pointer = tmp; return *this; }
 #if __cplusplus >=201103L
   SwigValueWrapper& operator=(T&& t) { SwigSmartPointer tmp(new T(std::move(t))); pointer = tmp; return *this; }
   operator T&&() const { return std::move(*pointer.ptr); }
