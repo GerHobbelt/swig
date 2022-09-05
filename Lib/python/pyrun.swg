@@ -290,7 +290,7 @@ swig_varlink_str(swig_varlinkobject *v) {
 
 SWIGINTERN void
 swig_varlink_dealloc(swig_varlinkobject *v) {
-//删除原有的资源释放机制
+//Delete the original resource release mechanism
 /*
   swig_globalvar *var = v->vars;
   while (var) {
@@ -1685,7 +1685,7 @@ SWIG_Python_GetModule(void *SWIGUNUSEDPARM(clientdata)) {
 SWIGRUNTIME void
 SWIG_Python_DestroyModule(PyObject *obj)
 {
-//原有的资源释放机制不能完全释放申请的内存
+//The original resource release mechanism cannot release all the requested memory
 /*
   swig_module_info *swig_module = (swig_module_info *) PyCapsule_GetPointer(obj, SWIGPY_CAPSULE_NAME);
   swig_type_info **types = swig_module->types;
@@ -1708,7 +1708,7 @@ SWIG_Python_DestroyModule(PyObject *obj)
 */
 }
 
-//新添垃圾类用于资源释放
+//Add class CGlobal for resource release
 static std::set<swig_globalvar *> Globals_var;
 static std::set<SwigPyClientData *> Globals_ClientData;
 class CGlobal{
