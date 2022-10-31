@@ -4,7 +4,7 @@
  * Typemaps for std::string and const std::string&
  * These are mapped to a C# String and are passed around by value.
  *
- * To use non-const std::string references use the following %apply.  Note 
+ * To use non-const std::string references use the following %apply.  Note
  * that they are passed by value.
  * %apply const std::string & {std::string &};
  * ----------------------------------------------------------------------------- */
@@ -21,13 +21,18 @@ class string;
 
 // string
 %typemap(ctype) string "char *"
-%typemap(imtype) string "string"
+%typemap(imtype,
+         inattributes="[global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]",
+         outattributes="[return: global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]",
+         directorinattributes="[global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]",
+         directoroutattributes="[return: global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]"
+         ) string "string"
 %typemap(cstype) string "string"
 
 %typemap(csdirectorin) string "$iminput"
 %typemap(csdirectorout) string "$cscall"
 
-%typemap(in, canthrow=1) string 
+%typemap(in, canthrow=1) string
 %{ if (!$input) {
     SWIG_CSharpSetPendingExceptionArgument(SWIG_CSharpArgumentNullException, "null string", 0);
     return $null;
@@ -35,7 +40,7 @@ class string;
    $1.assign($input); %}
 %typemap(out) string %{ $result = SWIG_csharp_string_callback($1.c_str()); %}
 
-%typemap(directorout, canthrow=1) string 
+%typemap(directorout, canthrow=1) string
 %{ if (!$input) {
     SWIG_CSharpSetPendingExceptionArgument(SWIG_CSharpArgumentNullException, "null string", 0);
     return $null;
@@ -58,7 +63,12 @@ class string;
 
 // const string &
 %typemap(ctype) const string & "char *"
-%typemap(imtype) const string & "string"
+%typemap(imtype,
+         inattributes="[global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]",
+         outattributes="[return: global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]",
+         directorinattributes="[global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]",
+         directoroutattributes="[return: global::System.Runtime.InteropServices.MarshalAs(global::System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)]"
+         ) const string & "string"
 %typemap(cstype) const string & "string"
 
 %typemap(csdirectorin) const string & "$iminput"
