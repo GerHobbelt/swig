@@ -257,7 +257,11 @@
 
 #define WARN_PYTHON_INDENT_MISMATCH           740
 
-/* please leave 740-759 free for Python */
+/* please leave 740-749 free for Python */
+
+#define WARN_R_MISSING_RTYPECHECK_TYPEMAP     750
+
+/* please leave 750-759 free for R */
 
 #define WARN_FORTRAN_TYPEMAP_CTYPE_UNDEF    760
 #define WARN_FORTRAN_TYPEMAP_FTYPE_UNDEF    761
