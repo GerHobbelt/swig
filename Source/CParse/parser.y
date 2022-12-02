@@ -4488,8 +4488,9 @@ templateparameters : templateparameter templateparameterstail {
                    | empty { $$ = 0; }
                    ;
 
-templateparameter : templcpptype {
+templateparameter : templcpptype def_args {
 		    $$ = NewParmWithoutFileLineInfo(NewString($1), 0);
+		    Setattr($$, "value", $2.rawval ? $2.rawval : $2.val);
                   }
                   | parm {
                     $$ = $1;
@@ -5293,13 +5294,13 @@ valparm        : parm {
 
 callparms      : valexpr callptail {
 		 $$ = $1;
-		 Printf($$.val, "%s", $2);
+		 Printf($$.val, "%s", $2.val);
 	       }
 	       | empty { $$.val = NewStringEmpty(); }
 	       ;
 
 callptail      : COMMA valexpr callptail {
-		 $$.val = NewStringf(",%s%s", $2, $3);
+		 $$.val = NewStringf(",%s%s", $2.val, $3.val);
 		 $$.type = 0;
 	       }
 	       | empty { $$.val = NewStringEmpty(); }
@@ -6581,7 +6582,7 @@ exprmem        : ID ARROW ID {
 		 $$.type = 0;
 	       }
 	       | ID ARROW ID LPAREN callparms RPAREN {
-		 $$.val = NewStringf("%s->%s(%s)", $1, $3, $5);
+		 $$.val = NewStringf("%s->%s(%s)", $1, $3, $5.val);
 		 $$.type = 0;
 	       }
 	       | exprmem ARROW ID {
@@ -6590,14 +6591,14 @@ exprmem        : ID ARROW ID {
 	       }
 	       | exprmem ARROW ID LPAREN callparms RPAREN {
 		 $$ = $1;
-		 Printf($$.val, "->%s(%s)", $3, $5);
+		 Printf($$.val, "->%s(%s)", $3, $5.val);
 	       }
 	       | ID PERIOD ID {
 		 $$.val = NewStringf("%s.%s", $1, $3);
 		 $$.type = 0;
 	       }
 	       | ID PERIOD ID LPAREN callparms RPAREN {
-		 $$.val = NewStringf("%s.%s(%s)", $1, $3, $5);
+		 $$.val = NewStringf("%s.%s(%s)", $1, $3, $5.val);
 		 $$.type = 0;
 	       }
 	       | exprmem PERIOD ID {
@@ -6606,7 +6607,7 @@ exprmem        : ID ARROW ID {
 	       }
 	       | exprmem PERIOD ID LPAREN callparms RPAREN {
 		 $$ = $1;
-		 Printf($$.val, ".%s(%s)", $3, $5);
+		 Printf($$.val, ".%s(%s)", $3, $5.val);
 	       }
 	       ;
 
