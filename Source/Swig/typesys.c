@@ -1702,8 +1702,12 @@ void SwigType_remember_clientdata(const SwigType *t, const_String_or_char_ptr cl
     const char *lt = strchr(ct, '<');
     /* Allow for `<<` operator in constant expression for array size. */
     if (lt && lt[1] != '(' && lt[1] != '<') {
-      Printf(stdout, "Bad template type passed to SwigType_remember: %s\n", t);
-      assert(0);
+      /* We special case `<<` above, but most cases aren't handled, for example:
+       *
+       * unsigned char myarray[std::numeric_limits<unsigned char>::max()]; // #2486
+       */
+      Swig_error(Getfile(t), Getline(t), "Array size expressions containing a '<' character not fully supported\n");
+      Exit(EXIT_FAILURE);
     }
   }
 

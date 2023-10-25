@@ -141,7 +141,7 @@ void another_macro_checking(void) {
  * https://gcc.gnu.org/onlinedocs/gcc-4.8.5/cpp/Self-Referential-Macros.html
  */
 %inline %{
-int y = 0;
+const int y = 0;
 %}
 
 #define x (4 + y)
@@ -151,3 +151,38 @@ int y = 0;
 
 #undef y
 #undef x
+
+/* Regression test for #ifdef and #ifndef not working inside a %define.
+ * https://github.com/swig/swig/issues/2183
+ */
+#undef THISMACROISNOTDEFINED /* Make sure! */
+#define THISMACROISDEFINED
+
+%define %test()
+
+#ifdef THISMACROISNOTDEFINED
+# error #ifdef inside percent-define failed
+#endif
+#ifndef THISMACROISDEFINED
+# error #ifndef inside percent-define failed
+#endif
+/* Check pre-defined macro too. */
+#ifndef SWIG
+# error #ifndef inside percent-define failed
+#endif
+
+/* These cases already worked, but should still have test coverage. */
+#if defined THISMACROISNOTDEFINED
+# error #if defined inside percent-define failed
+#endif
+#if !defined THISMACROISDEFINED
+# error #if !defined inside percent-define failed
+#endif
+/* Check pre-defined macro too. */
+#if !defined SWIG
+# error #if !defined inside percent-define failed
+#endif
+
+%enddef
+
+%test()

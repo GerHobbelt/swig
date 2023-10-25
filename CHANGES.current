@@ -7,11 +7,25 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-04-21: olly
+	    #2183 Fix #ifdef and #ifndef to work inside a %define.  Previously
+	    they were silently ignored in this context (but #if defined already
+	    worked here if you need a workaround which works for older
+	    versions).
+
+2023-04-20: erezgeva
+	    [Go] #2533 Implement argcargv.i library for Go.
+
+2023-04-19: davidcl 
+            [Scilab] Add support for Scilab 2023.x.
+	    Introduce a `-gatewayxml6` options to generate an XML with full
+	    function names.
+
 2023-04-19: mmomtchev
-            https://sourceforge.net/p/swig/bugs/1163/ #2525 Fix preprocessor
-            expansion when a macro expands to the name of another macro which
-            takes parameters from the input following the original macro
-            expansion.
+	    https://sourceforge.net/p/swig/bugs/1163/ #1882 #2525
+	    Fix preprocessor expansion when a macro expands to the name of
+	    another macro which takes parameters from the input following the
+	    original macro expansion.
 
 2023-04-19: wildmaples
 	    [Ruby] #2527 Fix "undefining the allocator of T_DATA" warning seen
