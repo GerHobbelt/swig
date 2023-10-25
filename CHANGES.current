@@ -7,6 +7,21 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-05-19: olly
+	    SWIG no longer defines preprocessor symbols corresponding to
+	    command line options (e.g. `-module blah` was resulting in
+	    `SWIGOPT_MODULE` being set to `blah`).  This feature was added in
+	    2001 so that "[m]odules can look for these symbols to alter their
+	    code generation if needed", but it's never been used for that
+	    purpose in over 20 years, and has never been documented outside of
+	    CHANGES.
+
+2023-05-18: olly
+	    SWIG now defines __STDC__ to 1 to match the behaviour of ISO C/C++
+	    compilers, rather than to have an empty value.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
 2023-05-18: olly
 	    #2591 The value of __cplusplus SWIG defines can now be overridden
 	    on the command line, e.g. using -D__cplusplus=201103L which is
@@ -52,7 +67,7 @@ Version 4.2.0 (in progress)
 
 2023-05-08: olly
 	    #1567 Add support for std::string_view (new in C++17) for C#, Java,
-	    Lua, PHP and Tcl.
+	    Lua, Perl, PHP, Ruby and Tcl.
 
 2023-05-08: olly
 	    [PHP] #2544 Wrap overloaded method with both static and non-static
