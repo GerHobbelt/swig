@@ -7,6 +7,24 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-10-21: wsfulton
+            [Python] #1783 Don't swallow all exceptions into a NotImplemented return
+            when wrapping operators which are marked with %pythonmaybecall. Corrects the
+            implementation of PEP 207.
+
+2023-10-18: wsfulton
+            [C#, D] #902 Use the C++11 enum base, that is, the underlying enum
+            type.
+
+            For C#, it is used as the underlying type in the generated C# enum.
+            For D, it is used as the enum base type in the generated D enum.
+
+2023-10-16: wsfulton
+            #2687 Another using declarations fix for inheritance hierarchies more than
+            two deep and the using declarations are overloaded. Using declarations
+            from a base class' base were not available for use in the target
+            language when the using declaration was before a method declaration.
+
 2023-10-11: wsfulton
             [C#, D, Go, Guile, Java, Javascript, Lua, Ocaml, R, Racket] #1680
             carrays.i library modified to use size_t instead of int for the functions
