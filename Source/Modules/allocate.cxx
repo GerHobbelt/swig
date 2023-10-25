@@ -667,14 +667,10 @@ class Allocate:public Dispatcher {
     }
   }
 
-  bool is_assignable(Node *n, bool &is_reference) {
+  bool is_assignable_type(const SwigType *type) {
     bool assignable = true;
-    SwigType *ty = Copy(Getattr(n, "type"));
-    SwigType_push(ty, Getattr(n, "decl"));
-    SwigType *ftd = SwigType_typedef_resolve_all(ty);
-    SwigType *td = SwigType_strip_qualifiers(ftd);
-    if (SwigType_type(td) == T_USER) {
-      Node *cn = Swig_symbol_clookup(td, 0);
+    if (SwigType_type(type) == T_USER) {
+      Node *cn = Swig_symbol_clookup(type, 0);
       if (cn) {
 	if ((Strcmp(nodeType(cn), "class") == 0)) {
 	  if (Getattr(cn, "allocate:noassign")) {
@@ -682,8 +678,25 @@ class Allocate:public Dispatcher {
 	  }
 	}
       }
+    } else if (SwigType_isarray(type)) {
+      SwigType *array_type = SwigType_array_type(type);
+      assignable = is_assignable_type(array_type);
     }
+    return assignable;
+  }
+
+  bool is_assignable(Node *n, bool &is_reference, bool &is_const) {
+    SwigType *ty = Copy(Getattr(n, "type"));
+    SwigType_push(ty, Getattr(n, "decl"));
+    SwigType *ftd = SwigType_typedef_resolve_all(ty);
+    SwigType *td = SwigType_strip_qualifiers(ftd);
+
+    bool assignable = is_assignable_type(td);
     is_reference = SwigType_isreference(td) || SwigType_isrvalue_reference(td);
+    is_const = !SwigType_ismutable(ftd);
+    if (GetFlag(n, "hasconsttype"))
+      is_const = true;
+
     Delete(ty);
     Delete(ftd);
     Delete(td);
@@ -1158,12 +1171,13 @@ Allocate():
       if (Cmp(Getattr(n, "kind"), "variable") == 0) {
         /* Check member variable to determine whether assignment is valid */
 	bool is_reference;
-	bool assignable = is_assignable(n, is_reference);
-	if (!assignable) {
+	bool is_const;
+	bool assignable = is_assignable(n, is_reference, is_const);
+	if (!assignable || is_const) {
 	  SetFlag(n, "feature:immutable");
 	}
 	if (!is_static) {
-	  if (!assignable || is_reference)
+	  if (!assignable || is_reference || is_const)
 	    SetFlag(inclass, "allocate:has_nonassignable"); // The class has a variable that cannot be assigned to
 	}
       }
@@ -1244,8 +1258,9 @@ Allocate():
     } else {
       if (Cmp(Getattr(n, "kind"), "variable") == 0) {
 	bool is_reference;
-	bool assignable = is_assignable(n, is_reference);
-	if (!assignable) {
+	bool is_const;
+	bool assignable = is_assignable(n, is_reference, is_const);
+	if (!assignable || is_const) {
 	  SetFlag(n, "feature:immutable");
 	}
       }

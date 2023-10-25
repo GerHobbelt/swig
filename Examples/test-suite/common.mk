@@ -128,6 +128,7 @@ CPP_TEST_CASES += \
 	arrays_global \
 	arrays_global_twodim \
 	arrays_scope \
+	assign_const \
 	assign_reference \
 	autodoc \
 	bloody_hell \
@@ -372,6 +373,7 @@ CPP_TEST_CASES += \
 	overload_template_fast \
 	pointer_reference \
 	preproc_constants \
+	preproc_cpp \
 	primitive_ref \
 	private_assign \
 	proxycode \

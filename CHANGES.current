@@ -7,6 +7,39 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-09-11: emmenlau
+            #2394 Add support to preprocessor for true and false. Note that this
+            is for C++ not C.
+
+2023-09-11: wsfulton
+            [R] #2605 Complete transition to rtypecheck typemaps from hard coded
+            logic. Also see entry dated 2022-10-28 for swig-4.1.1. The rtypecheck
+            typemaps implement typechecking in R for each function parameter using
+            functions such as is.numeric, is.character, is.logical, is.null etc.
+
+2023-09-09: wsfulton
+            https://sourceforge.net/p/swig/bugs/919/
+
+            Fix incorrect variable setters being generated when wrapping arrays.
+            A setter is no longer generated if the type of the array members
+            are non-assignable.
+
+2023-09-09: wsfulton
+            Non-assignable detection fixes when wrapping const member variables.
+            Const member variables such as the following are non-assignable by
+            by default:
+
+              char * const x;
+              const int x;
+              const int x[1];
+
+            but not:
+
+              const char * x;
+
+            Variable setters are not generated when wrapping these non-assignable
+            variables and classes containing such non-assignable variables.
+
 2023-09-07: wsfulton
             Non-assignable detection fixes when wrapping rvalue reference variables.
             Rvalue reference variables such as the following are non-assignable by
