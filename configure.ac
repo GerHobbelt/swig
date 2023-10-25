@@ -676,33 +676,31 @@ if test x"${with_d}" = xno; then
   AC_MSG_NOTICE([Disabling D])
   D2COMPILER=
 else
-  old_ac_ext=$ac_ext
-  ac_ext=d
 
   if test -z "$D2COMPILERBIN" ; then
-    AC_CHECK_PROGS(D2COMPILER, dmd gdmd ldmd2 ldc2)
-
+    AC_CHECK_PROGS(D2COMPILER, dmd ldmd2 ldc2 gdmd)
     if test -n "$D2COMPILER" ; then
+      old_ac_ext=$ac_ext
+      ac_ext=d
       AC_MSG_CHECKING(whether the D2 compiler works)
       cat > conftest.$ac_ext <<_ACEOF
 import std.algorithm;
 void main() {
 }
 _ACEOF
-      rm -f conftest.$ac_objext
+      rm -f conftest.out
       AS_IF(
-        [$D2COMPILER conftest.$ac_ext 2>&AS_MESSAGE_LOG_FD && test ! -s conftest.err && test -s conftest.$ac_objext],
+        [$D2COMPILER conftest.$ac_ext -ofconftest.out 2>&AS_MESSAGE_LOG_FD && test ! -s conftest.err && test -s conftest.out],
         [AC_MSG_RESULT([yes])],
         [_AC_MSG_LOG_CONFTEST AC_MSG_RESULT([no])
         D2COMPILER=]
       )
-      rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+      rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext conftest.out
+      ac_ext=$old_ac_ext
     fi
   else
     D2COMPILER="$D2COMPILERBIN"
   fi
-
-  ac_ext=$old_ac_ext
 fi
 
 # Do not prefix library file names with "lib" on Windows.
