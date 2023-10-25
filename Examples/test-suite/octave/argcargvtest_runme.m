@@ -17,6 +17,9 @@ endif
 if (mainv(targs,1) != 'hola')
   error("bad main typemap");
 endif
+if (mainv(targs,2) != '<<NULL>>')
+  error("bad main typemap");
+endif
 
 try
   error_flag = 0;
@@ -30,3 +33,31 @@ endif
 
 
 initializeApp(largs);
+
+# Check that an empty array works.
+empty_args={};
+if (mainc(empty_args) != 0)
+  error("bad main typemap");
+endif
+if (mainv(empty_args,0) != '<<NULL>>')
+  error("bad main typemap");
+endif
+
+# Check that empty strings are handled.
+empty_string={"hello", blanks(0), "world"};
+disp(length(empty_string));
+if (mainc(empty_string) != 3)
+  error("bad main typemap");
+endif
+if (mainv(empty_string, 0) != "hello")
+  error("bad main typemap");
+endif
+if (mainv(empty_string, 1) != "")
+  error("bad main typemap");
+endif
+if (mainv(empty_string, 2) != "world")
+  error("bad main typemap");
+endif
+if (mainv(empty_string, 3) != "<<NULL>>")
+  error("bad main typemap");
+endif
