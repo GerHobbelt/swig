@@ -13,6 +13,9 @@
 #endif
 %}
 
+%ignore operator==(ConstExpressions,ConstExpressions);
+%ignore operator!=(ConstExpressions,ConstExpressions);
+
 %inline %{
 #ifdef SWIG
 #define SWIGTESTCONST const
@@ -39,6 +42,9 @@ struct ConstExpressions {
   // Regression tests for https://github.com/swig/swig/issues/284 :
   explicit constexpr ConstExpressions(int) { }
   constexpr explicit ConstExpressions(double) { }
+  // Regression tests for  https://github.com/swig/swig/issues/2079 :
+  constexpr friend bool operator==(ConstExpressions,ConstExpressions) { return true; }
+  friend constexpr bool operator!=(ConstExpressions,ConstExpressions) { return false; }
 };
 %}
 
