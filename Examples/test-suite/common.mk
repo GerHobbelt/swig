@@ -473,6 +473,7 @@ CPP_TEST_CASES += \
 	template_namespace_forward_declaration \
 	template_using_directive_and_declaration_forward \
 	template_using_directive_typedef \
+	template_using_member_default_arg \
 	template_nested \
 	template_nested_flat \
 	template_nested_typemaps \
@@ -496,6 +497,7 @@ CPP_TEST_CASES += \
 	template_specialization \
 	template_specialization_defarg \
 	template_specialization_enum \
+	template_specialization_using_declaration \
 	template_static \
 	template_tbase_template \
 	template_template_parameters \

@@ -42,7 +42,6 @@ static void add_parms(ParmList *p, List *patchlist, List *typelist, int is_patte
     SwigType *ty = Getattr(p, "type");
     SwigType *val = Getattr(p, "value");
     Append(typelist, ty);
-    Append(typelist, val);
     if (is_pattern) {
       /* Typemap patterns are not simple parameter lists.
        * Output style ("out", "ret" etc) typemap names can be
@@ -161,6 +160,7 @@ static void cparse_template_expand(Node *templnode, Node *n, String *tname, Stri
     Append(cpatchlist, code);
 
     if (Getattr(n, "conversion_operator")) {
+      /* conversion operator "name" and "sym:name" attributes are unusual as they contain c++ types, so treat as code for patching */
       Append(cpatchlist, Getattr(n, "name"));
       if (Getattr(n, "sym:name")) {
 	Append(cpatchlist, Getattr(n, "sym:name"));
@@ -242,8 +242,6 @@ static void cparse_template_expand(Node *templnode, Node *n, String *tname, Stri
       }
       if (strchr(Char(name), '<')) {
 	Append(patchlist, Getattr(n, "name"));
-      } else {
-	Append(name, templateargs);
       }
       name = Getattr(n, "sym:name");
       if (name) {
@@ -272,8 +270,6 @@ static void cparse_template_expand(Node *templnode, Node *n, String *tname, Stri
       if (name) {
 	if (strchr(Char(name), '<'))
 	  Append(patchlist, Getattr(n, "name"));
-	else
-	  Append(name, templateargs);
       }
       name = Getattr(n, "sym:name");
       if (name) {
@@ -288,10 +284,45 @@ static void cparse_template_expand(Node *templnode, Node *n, String *tname, Stri
       Append(cpatchlist, Getattr(n, "code"));
     }
   } else if (Equal(nodeType, "using")) {
+    String *name = Getattr(n, "name");
     String *uname = Getattr(n, "uname");
     if (uname && strchr(Char(uname), '<')) {
       Append(patchlist, uname);
     }
+    if (!(Getattr(n, "templatetype"))) {
+      // Copied from handling "constructor" .. not sure if all this is needed
+      String *symname;
+      String *stripped_name = SwigType_templateprefix(name);
+      if (Strstr(tname, stripped_name)) {
+	Replaceid(name, stripped_name, tname);
+      }
+      Delete(stripped_name);
+      symname = Getattr(n, "sym:name");
+      if (symname) {
+	stripped_name = SwigType_templateprefix(symname);
+	if (Strstr(tname, stripped_name)) {
+	  Replaceid(symname, stripped_name, tname);
+	}
+	Delete(stripped_name);
+      }
+      if (strchr(Char(name), '<')) {
+	Append(patchlist, Getattr(n, "name"));
+      }
+      name = Getattr(n, "sym:name");
+      if (name) {
+	if (strchr(Char(name), '<')) {
+	  Clear(name);
+	  Append(name, rname);
+	} else {
+	  String *tmp = Copy(name);
+	  Replace(tmp, tname, rname, DOH_REPLACE_ANY);
+	  Clear(name);
+	  Append(name, tmp);
+	  Delete(tmp);
+	}
+      }
+    }
+
     if (Getattr(n, "namespace")) {
       /* Namespace link.   This is nasty.  Is other namespace defined? */
 
@@ -557,9 +588,11 @@ int Swig_cparse_template_expand(Node *n, String *rname, ParmList *tparms, Symtab
 	  valuestr = SwigType_str(dvalue, 0);
 	  sz = Len(patchlist);
 	  for (i = 0; i < sz; i++) {
+	    /* Patch String or SwigType with SwigType, eg T => int in Foo<(T)>, or TT => Hello<(int)> in X<(TT)>::meth */
 	    String *s = Getitem(patchlist, i);
 	    Replace(s, name, dvalue, DOH_REPLACE_ID);
 	  }
+
 	  sz = Len(typelist);
 	  for (i = 0; i < sz; i++) {
 	    SwigType *s = Getitem(typelist, i);
@@ -590,7 +623,9 @@ int Swig_cparse_template_expand(Node *n, String *rname, ParmList *tparms, Symtab
 
 	  sz = Len(cpatchlist);
 	  for (i = 0; i < sz; i++) {
+	    /* Patch String with C++ String type, eg T => int in Foo< T >, or TT => Hello< int > in X< TT >::meth */
 	    String *s = Getitem(cpatchlist, i);
+	    /* Stringising that ought to be done in the preprocessor really, eg #T => "int" */
 	    Replace(s, tmp, tmpr, DOH_REPLACE_ID);
 	    Replace(s, name, valuestr, DOH_REPLACE_ID);
 	  }

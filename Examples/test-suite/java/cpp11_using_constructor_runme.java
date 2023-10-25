@@ -23,5 +23,88 @@ public class cpp11_using_constructor_runme {
 
     // Protected base constructors
     // Cannot test these as the constructors are protected
+
+    // Mix of public and overloaded constructors
+    new MixedDerived1a(0, "hi").meth();
+    new MixedDerived1a().meth();
+    new MixedDerived1b(0, "hi").meth();
+    new MixedDerived1b().meth();
+
+    new MixedDerived2a(0, "hi").meth();
+    new MixedDerived2a().meth();
+    new MixedDerived2b(0, "hi").meth();
+    new MixedDerived2b().meth();
+
+    new MixedDerived2c(0, "hi").meth();
+    new MixedDerived2c().meth();
+    new MixedDerived2c(0).meth();
+
+    new MixedDerived2d(0, "hi").meth();
+    new MixedDerived2d().meth();
+    new MixedDerived2d(0).meth();
+
+    new MixedDerived3a(0, "hi").meth();
+    new MixedDerived3a().meth();
+    new MixedDerived3b(0, "hi").meth();
+    new MixedDerived3b().meth();
+
+    new MixedDerived3c(0, "hi").meth();
+    new MixedDerived3c().meth();
+    new MixedDerived3c(0).meth();
+
+    new MixedDerived3d(0, "hi").meth();
+    new MixedDerived3d().meth();
+    new MixedDerived3d(0).meth();
+
+    // Mix of protected base constructors and overloading
+    new ProotDerived1a().meth();
+
+    new ProotDerived1b(0, "hi").meth();
+    new ProotDerived1b().meth();
+
+    new ProotDerived1c(0, "hi").meth();
+    new ProotDerived1c().meth();
+
+    new ProotDerived1d(0).meth();
+    new ProotDerived1d().meth();
+
+    new ProotDerived1e(0).meth();
+    new ProotDerived1e().meth();
+
+    new ProotDerived2a(0, "hi").meth();
+
+    new ProotDerived2b(0, "hi").meth();
+
+    new ProotDerived2c(0, "hi").meth();
+    new ProotDerived2c().meth();
+
+    new ProotDerived2d(0, "hi").meth();
+    new ProotDerived2d().meth();
+
+    new ProotDerived2e(0, "hi").meth();
+    new ProotDerived2e().meth();
+
+    new ProotDerived2f(0, "hi").meth();
+    new ProotDerived2f().meth();
+    new ProotDerived2f(0).meth();
+
+    // Missing base
+    // new HiddenDerived1();
+
+    // Templates and public base constructors (derive from non-template)
+    new TemplatePublicDerived1Int(0, "hi").meth();
+    new TemplatePublicDerived2Int().meth();
+    new TemplatePublicDerived2Int(0, "hi").meth();
+    new TemplatePublicDerived3Int().meth();
+    new TemplatePublicDerived3Int(0, "hi").meth();
+    new TemplatePublicDerived4Int().meth();
+
+    // Templates and public base constructors (derive from template)
+    new TemplPublicDerived1Int(0, "hi").meth();
+    new TemplPublicDerived2Int().meth();
+    new TemplPublicDerived2Int(0, "hi").meth();
+    new TemplPublicDerived3Int().meth();
+    new TemplPublicDerived3Int(0, "hi").meth();
+    new TemplPublicDerived4Int().meth();
   }
 }
