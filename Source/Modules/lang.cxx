@@ -1470,7 +1470,7 @@ int Language::membervariableHandler(Node *n) {
 
     /* Create a function to set the value of the variable */
 
-    int assignable = is_assignable(n);
+    int assignable = !is_immutable(n);
 
     if (SmartPointer) {
       if (!Getattr(CurrentClass, "allocate:smartpointermutable")) { 
@@ -2923,7 +2923,7 @@ int Language::variableWrapper(Node *n) {
   }
 
   /* If no way to set variables.  We simply create functions */
-  int assignable = is_assignable(n);
+  int assignable = !is_immutable(n);
   int flags = use_naturalvar_mode(n);
   if (!GetFlag(n, "wrappedasconstant"))
     flags = flags | Extend;
@@ -3735,28 +3735,8 @@ void Language::setOverloadResolutionTemplates(String *argc, String *argv) {
   argv_template_string = Copy(argv);
 }
 
-int Language::is_assignable(Node *n) {
-  if (GetFlag(n, "feature:immutable"))
-    return 0;
-  int assignable = 1;
-  SwigType *type = Getattr(n, "type");
-  Node *cn = 0;
-  SwigType *ftd = SwigType_typedef_resolve_all(type);
-  SwigType *td = SwigType_strip_qualifiers(ftd);
-  if (SwigType_type(td) == T_USER) {
-    cn = Swig_symbol_clookup(td, 0);
-    if (cn) {
-      if ((Strcmp(nodeType(cn), "class") == 0)) {
-	if (Getattr(cn, "allocate:noassign")) {
-	  SetFlag(n, "feature:immutable");
-	  assignable = 0;
-	}
-      }
-    }
-  }
-  Delete(ftd);
-  Delete(td);
-  return assignable;
+int Language::is_immutable(Node *n) {
+  return GetFlag(n, "feature:immutable");
 }
 
 String *Language::runtimeCode() {

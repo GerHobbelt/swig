@@ -21,7 +21,9 @@
  *
  * Once the analysis is complete, the non-explicit/implied default constructors
  * and destructors are added to the parse tree. Implied copy constructors are
- * added too if requested via the copyctor feature.
+ * added too if requested via the copyctor feature. Detection of implied
+ * assignment operators is also handled as assigment is required in the generated
+ * code for variable setters.
  * ----------------------------------------------------------------------------- */
 
 #include "swigmod.h"
@@ -665,6 +667,29 @@ class Allocate:public Dispatcher {
     }
   }
 
+  bool is_assignable(Node *n, bool &is_reference) {
+    bool assignable = true;
+    SwigType *ty = Copy(Getattr(n, "type"));
+    SwigType_push(ty, Getattr(n, "decl"));
+    SwigType *ftd = SwigType_typedef_resolve_all(ty);
+    SwigType *td = SwigType_strip_qualifiers(ftd);
+    if (SwigType_type(td) == T_USER) {
+      Node *cn = Swig_symbol_clookup(td, 0);
+      if (cn) {
+	if ((Strcmp(nodeType(cn), "class") == 0)) {
+	  if (Getattr(cn, "allocate:noassign")) {
+	    assignable = false;
+	  }
+	}
+      }
+    }
+    is_reference = SwigType_isreference(td) || SwigType_isrvalue_reference(td);
+    Delete(ty);
+    Delete(ftd);
+    Delete(td);
+    return assignable;
+  }
+
 public:
 Allocate():
   inclass(NULL), extendmode(0) {
@@ -789,6 +814,7 @@ Allocate():
 	}
       }
     }
+
     if (!Getattr(n, "allocate:has_copy_constructor")) {
       if (Getattr(n, "abstracts")) {
 	Delattr(n, "allocate:copy_constructor");
@@ -858,6 +884,10 @@ Allocate():
 	if (Getattr(n, "allocate:noassign")) {
 	  allows_assign = 0;
 	}
+      }
+      /* If any member variables are non assignable, this class is also non assignable by default */
+      if (GetFlag(n, "allocate:has_nonassignable")) {
+	allows_assign = 0;
       }
       if (!allows_assign) {
 	Setattr(n, "allocate:noassign", "1");
@@ -1120,14 +1150,22 @@ Allocate():
       /* Check to see if this is a static member or not.  If so, we add an attribute
          cplus:staticbase that saves the current class */
 
-      if (Swig_storage_isstatic(n)) {
+      int is_static = Swig_storage_isstatic(n);
+      if (is_static) {
 	Setattr(n, "cplus:staticbase", inclass);
-      } else if (Cmp(Getattr(n, "kind"), "variable") == 0) {
+      }
+
+      if (Cmp(Getattr(n, "kind"), "variable") == 0) {
         /* Check member variable to determine whether assignment is valid */
-        if (SwigType_isreference(Getattr(n, "type"))) {
-          /* Can't assign a class with reference member data */
-	  Setattr(inclass, "allocate:noassign", "1");
-        }
+	bool is_reference;
+	bool assignable = is_assignable(n, is_reference);
+	if (!assignable) {
+	  SetFlag(n, "feature:immutable");
+	}
+	if (!is_static) {
+	  if (!assignable || is_reference)
+	    SetFlag(inclass, "allocate:has_nonassignable"); // The class has a variable that cannot be assigned to
+	}
       }
 
       String *name = Getattr(n, "name");
@@ -1201,6 +1239,14 @@ Allocate():
 	      break;
 	    }
 	  }
+	}
+      }
+    } else {
+      if (Cmp(Getattr(n, "kind"), "variable") == 0) {
+	bool is_reference;
+	bool assignable = is_assignable(n, is_reference);
+	if (!assignable) {
+	  SetFlag(n, "feature:immutable");
 	}
       }
     }

@@ -89,7 +89,6 @@ CPP_TEST_BROKEN += \
 	li_boost_shared_ptr_template \
 	nested_private \
 	template_default_pointer \
-	template_private_assignment \
 	$(CPP11_TEST_BROKEN) \
 	$(CPP14_TEST_BROKEN) \
 	$(CPP17_TEST_BROKEN) \
@@ -129,6 +128,7 @@ CPP_TEST_CASES += \
 	arrays_global \
 	arrays_global_twodim \
 	arrays_scope \
+	assign_reference \
 	autodoc \
 	bloody_hell \
 	bools \
@@ -475,6 +475,7 @@ CPP_TEST_CASES += \
 	template_keyword_in_type \
 	template_methods \
 	template_namespace_forward_declaration \
+	template_private_assignment \
 	template_using_directive_and_declaration_forward \
 	template_using_directive_typedef \
 	template_using_member_default_arg \
@@ -597,6 +598,8 @@ CPP11_TEST_CASES += \
 	cpp11_alias_nested_template_scoping \
 	cpp11_alignment \
 	cpp11_alternate_function_syntax \
+	cpp11_assign_delete \
+	cpp11_assign_rvalue_reference \
 	cpp11_attribute_specifiers \
 	cpp11_auto_variable \
 	cpp11_brackets_expression \
