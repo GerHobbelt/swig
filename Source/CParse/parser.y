@@ -599,6 +599,19 @@ static void add_symbols(Node *n) {
 	  SetFlag(n, "feature:ignore");
 	}
       }
+      if (Equal(Getattr(n, "type"), "auto")) {
+	/* Ignore functions with an auto return type and no trailing return type
+	 * Use Getattr instead of GetFlag to handle explicit ignore and explicit not ignore */
+	if (!(Getattr(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0)) {
+	  SWIG_WARN_NODE_BEGIN(n);
+	  if (SwigType_isfunction(Getattr(n, "decl")))
+	    Swig_warning(WARN_CPP14_AUTO, Getfile(n), Getline(n), "Unable to deduce auto return type for '%s' (ignored).\n", Swig_name_decl(n));
+	  else
+	    Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' (ignored).\n", Swig_name_decl(n));
+	  SWIG_WARN_NODE_END(n);
+	  SetFlag(n, "feature:ignore");
+	}
+      }
     }
     if (only_csymbol || GetFlag(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0) {
       /* Only add to C symbol table and continue */
@@ -1657,7 +1670,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token <dtype> NUM_INT NUM_DOUBLE NUM_FLOAT NUM_LONGDOUBLE NUM_UNSIGNED NUM_LONG NUM_ULONG NUM_LONGLONG NUM_ULONGLONG NUM_BOOL
 %token <intvalue> TYPEDEF
 %token <type> TYPE_INT TYPE_UNSIGNED TYPE_SHORT TYPE_LONG TYPE_FLOAT TYPE_DOUBLE TYPE_CHAR TYPE_WCHAR TYPE_VOID TYPE_SIGNED TYPE_BOOL TYPE_COMPLEX TYPE_TYPEDEF TYPE_RAW TYPE_NON_ISO_INT8 TYPE_NON_ISO_INT16 TYPE_NON_ISO_INT32 TYPE_NON_ISO_INT64
-%token LPAREN RPAREN COMMA SEMI EXTERN INIT LBRACE RBRACE PERIOD ELLIPSIS
+%token LPAREN RPAREN COMMA SEMI EXTERN LBRACE RBRACE PERIOD ELLIPSIS
 %token CONST_QUAL VOLATILE REGISTER STRUCT UNION EQUAL SIZEOF MODULE LBRACKET RBRACKET
 %token BEGINFILE ENDOFFILE
 %token ILLEGAL CONSTANT
@@ -1685,7 +1698,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token <str> DOXYGENSTRING
 %token <str> DOXYGENPOSTSTRING
 
-%left  CAST
+%precedence CAST
 %left  QUESTIONMARK
 %left  LOR
 %left  LAND
@@ -1693,13 +1706,16 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %left  XOR
 %left  AND
 %left  EQUALTO NOTEQUALTO
-%left  GREATERTHAN LESSTHAN GREATERTHANOREQUALTO LESSTHANOREQUALTO
+/* We don't currently allow < and > in any context where the associativity or
+ * precedence matters and Bison warns about that.
+ */
+%left  /* GREATERTHAN LESSTHAN */ GREATERTHANOREQUALTO LESSTHANOREQUALTO
 %left  LESSEQUALGREATER
 %left  LSHIFT RSHIFT
 %left  PLUS MINUS
 %left  STAR SLASH MODULO
-%left  UMINUS NOT LNOT
-%left  DCOLON
+%precedence UMINUS NOT LNOT
+%token DCOLON
 
 %type <node>     program interface declaration swig_directive ;
 
@@ -1715,7 +1731,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <node>     enumlist enumlist_item edecl_with_dox edecl;
 
 /* C++ declarations */
-%type <node>     cpp_declaration cpp_class_decl cpp_forward_class_decl cpp_template_decl cpp_alternate_rettype;
+%type <node>     cpp_declaration cpp_class_decl cpp_forward_class_decl cpp_template_decl;
 %type <node>     cpp_members cpp_member cpp_member_no_dox;
 %type <node>     cpp_constructor_decl cpp_destructor_decl cpp_protection_decl cpp_conversion_operator cpp_static_assert;
 %type <node>     cpp_swig_directive cpp_template_possible cpp_opt_declarators ;
@@ -1736,7 +1752,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <id>       access_specifier;
 %type <node>     base_specifier;
 %type <str>      variadic_opt;
-%type <type>     type rawtype type_right anon_bitfield_type decltype decltypeexpr;
+%type <type>     type rawtype type_right anon_bitfield_type decltype decltypeexpr cpp_alternate_rettype;
 %type <bases>    base_list inherit raw_inherit;
 %type <dtype>    definetype def_args etype default_delete deleted_definition explicit_default;
 %type <dtype>    expr exprnum exprsimple exprcompound valexpr exprmem callparms callptail;
@@ -3357,24 +3373,60 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
             * to wrap.
             */
 	   | storage_class AUTO declarator cpp_const LBRACE {
-	      Swig_warning(WARN_CPP14_AUTO, cparse_file, cparse_line, "Unable to deduce return type for '%s'.\n", $3.id);
 	      if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
+
+              $$ = new_node("cdecl");
+	      if ($4.qualifier) SwigType_push($3.type, $4.qualifier);
+	      Setattr($$, "refqualifier", $4.refqualifier);
+	      Setattr($$, "type", NewString("auto"));
+	      Setattr($$, "storage", $1);
+	      Setattr($$, "name", $3.id);
+	      Setattr($$, "decl", $3.type);
+	      Setattr($$, "parms", $3.parms);
+	      Setattr($$, "value", $4.val);
+	      Setattr($$, "throws", $4.throws);
+	      Setattr($$, "throw", $4.throwf);
+	      Setattr($$, "noexcept", $4.nexcept);
+	      Setattr($$, "final", $4.final);
+
+	      if ($4.bitfield) {
+		Setattr($$, "bitfield", $4.bitfield);
+	      }
+
+	      if (Strstr($3.id, "::")) {
+                String *p = Swig_scopename_prefix($3.id);
+		if (p) {
+		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
+		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
+		    String *lstr = Swig_scopename_last($3.id);
+		    Setattr($$, "name", lstr);
+		    Delete(lstr);
+		  } else {
+		    Delete($$);
+		    $$ = 0;
+		  }
+		  Delete(p);
+		} else {
+		  Delete($$);
+		  $$ = 0;
+		}
+	      }
+
+	      if ($4.qualifier && $1 && Strstr($1, "static"))
+		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
 	   }
 	   /* C++11 auto variable declaration. */
 	   | storage_class AUTO idcolon EQUAL definetype SEMI {
 	      SwigType *type = deduce_type(&$5);
-	      if (!type) {
-		Swig_warning(WARN_CPP11_AUTO, cparse_file, cparse_line, "Unable to deduce type for variable '%s'.\n", $3);
-		$$ = 0;
-	      } else {
-		$$ = new_node("cdecl");
-		Setattr($$, "type", type);
-		Setattr($$, "storage", $1);
-		Setattr($$, "name", $3);
-		Setattr($$, "decl", NewStringEmpty());
-		Setattr($$, "value", $5.val);
-		Setattr($$, "valuetype", type);
-	      }
+	      if (!type)
+		type = NewString("auto");
+	      $$ = new_node("cdecl");
+	      Setattr($$, "type", type);
+	      Setattr($$, "storage", $1);
+	      Setattr($$, "name", $3);
+	      Setattr($$, "decl", NewStringEmpty());
+	      Setattr($$, "value", $5.val);
+	      Setattr($$, "valuetype", type);
 	   }
 	   ;
 
@@ -3849,7 +3901,7 @@ cpp_class_decl: storage_class cpptype idcolon class_virt_specifier_opt inherit L
 		   Symtab *cscope;
 		   Node *am = 0;
 		   String *scpname = 0;
-		   (void) $<node>6;
+		   (void) $<node>7;
 		   $$ = currentOuterClass;
 		   currentOuterClass = Getattr($$, "nested:outer");
 		   nscope_inner = Getattr($<node>$, "nested:innerscope");
