@@ -592,6 +592,7 @@ CPP11_TEST_CASES += \
 	cpp11_alternate_function_syntax \
 	cpp11_attribute_specifiers \
 	cpp11_auto_variable \
+	cpp11_brackets_expression \
 	cpp11_constexpr \
 	cpp11_decltype \
 	cpp11_default_delete \
@@ -636,6 +637,7 @@ CPP11_TEST_CASES += \
 	cpp11_uniform_initialization \
 	cpp11_unrestricted_unions \
 	cpp11_userdefined_literals \
+	cpp11_using_constructor \
 	cpp11_using_typedef_struct \
 	cpp11_variadic_function_templates \
 	cpp11_variadic_templates \

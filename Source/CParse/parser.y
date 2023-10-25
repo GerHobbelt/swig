@@ -497,9 +497,12 @@ static void add_symbols(Node *n) {
 	  }
 	}
       } else {
-	  Setattr(n,"access", "public");
+	Setattr(n, "access", "public");
       }
+    } else if (extendmode && !inclass) {
+      Setattr(n, "access", "public");
     }
+
     if (Getattr(n,"sym:name")) {
       n = nextSibling(n);
       continue;
@@ -581,6 +584,13 @@ static void add_symbols(Node *n) {
       n = nextSibling(n);
       continue;
     }
+
+    if (GetFlag(n, "valueignored")) {
+      SWIG_WARN_NODE_BEGIN(n);
+      Swig_warning(WARN_PARSE_ASSIGNED_VALUE, Getfile(n), Getline(n), "Value assigned to %s not used due to limited parsing implementation.\n", SwigType_namestr(Getattr(n, "name")));
+      SWIG_WARN_NODE_END(n);
+    }
+
     if (cparse_cplusplus) {
       String *value = Getattr(n, "value");
       if (value && Strcmp(value, "delete") == 0) {
@@ -3232,6 +3242,49 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      if ($4.qualifier && $1 && Strstr($1, "static"))
 		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
            }
+	   | storage_class type declarator cpp_const EQUAL error SEMI {
+	      String *decl = $3.type;
+	      $$ = new_node("cdecl");
+	      if ($4.qualifier)
+	        decl = add_qualifier_to_declarator($3.type, $4.qualifier);
+	      Setattr($$, "refqualifier", $4.refqualifier);
+	      Setattr($$, "type", $2);
+	      Setattr($$, "storage", $1);
+	      Setattr($$, "name", $3.id);
+	      Setattr($$, "decl", decl);
+	      Setattr($$, "parms", $3.parms);
+
+	      /* Set dummy value to avoid adding in code for handling missing value in later stages */
+	      Setattr($$, "value", "*parse error*");
+	      SetFlag($$, "valueignored");
+
+	      Setattr($$, "throws", $4.throws);
+	      Setattr($$, "throw", $4.throwf);
+	      Setattr($$, "noexcept", $4.nexcept);
+	      Setattr($$, "final", $4.final);
+
+	      if (Strstr($3.id, "::")) {
+		String *p = Swig_scopename_prefix($3.id);
+		if (p) {
+		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
+		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
+		    String *lstr = Swig_scopename_last($3.id);
+		    Setattr($$, "name", lstr);
+		    Delete(lstr);
+		  } else {
+		    Delete($$);
+		    $$ = 0;
+		  }
+		  Delete(p);
+		} else {
+		  Delete($$);
+		  $$ = 0;
+		}
+	      }
+
+	      if ($4.qualifier && $1 && Strstr($1, "static"))
+		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
+	   }
            /* Alternate function syntax introduced in C++11:
               auto funcName(int x, int y) -> int; */
            | storage_class AUTO declarator cpp_const ARROW cpp_alternate_rettype virt_specifier_seq_opt initializer c_decl_tail {
