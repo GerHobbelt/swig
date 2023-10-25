@@ -66,7 +66,7 @@ static String  *Classprefix = 0;
 static String  *Namespaceprefix = 0;
 static int      inclass = 0;
 static Node    *currentOuterClass = 0; /* for nested classes */
-static const char *last_cpptype = 0;
+static String  *last_cpptype = 0;
 static int      inherit_list = 0;
 static Parm    *template_parameters = 0;
 static int      parsing_template_declaration = 0;
@@ -1178,7 +1178,7 @@ static void update_nested_classes(Node *n)
  * Create the nested class/struct/union as a forward declaration.
  * ----------------------------------------------------------------------------- */
 
-static Node *nested_forward_declaration(const char *storage, const char *kind, String *sname, String *name, Node *cpp_opt_declarators) {
+static Node *nested_forward_declaration(const char *storage, const String *kind, String *sname, String *name, Node *cpp_opt_declarators) {
   Node *nn = 0;
 
   if (sname) {
@@ -1681,9 +1681,10 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <p>        parm_no_dox parm valparm rawvalparms valparms valptail ;
 %type <p>        typemap_parm tm_list tm_tail ;
 %type <p>        templateparameter ;
-%type <id>       templcpptype cpptype classkey classkeyopt access_specifier;
+%type <type>     templcpptype cpptype classkey classkeyopt;
+%type <id>       access_specifier;
 %type <node>     base_specifier;
-%type <str>      variadic;
+%type <str>      variadic_opt;
 %type <type>     type rawtype type_right anon_bitfield_type decltype ;
 %type <bases>    base_list inherit raw_inherit;
 %type <dtype>    definetype def_args etype default_delete deleted_definition explicit_default;
@@ -2812,11 +2813,11 @@ types_directive : TYPES LPAREN parms RPAREN stringbracesemi {
    ------------------------------------------------------------ */
 
 template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN valparms GREATERTHAN SEMI {
-                  Parm *p, *tp;
+                  Parm *p;
 		  Node *n;
 		  Node *outer_class = currentOuterClass;
 		  Symtab *tscope = 0;
-		  int     specialized = 0;
+		  int     specialized = 0; /* fully specialized (an explicit specialization) */
 		  int     variadic = 0;
 		  String *symname = $3 ? NewString($3) : 0;
 
@@ -2879,7 +2880,7 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
                         Parm *tparms = Getattr(nn,"templateparms");
                         if (!tparms) {
                           specialized = 1;
-                        } else if (Getattr(tparms,"variadic") && strncmp(Char(Getattr(tparms,"variadic")), "1", 1)==0) {
+                        } else if (ParmList_variadic_parm(tparms)) {
                           variadic = 1;
                         }
                         if (nnisclass && !variadic && !specialized && (ParmList_len($7) > ParmList_len(tparms))) {
@@ -2892,65 +2893,10 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
                           continue;
                         } else {
 			  String *tname = Copy($5);
-                          int def_supplied = 0;
-                          /* Expand the template */
-			  Node *templ = Swig_symbol_clookup($5,0);
-			  Parm *targs = templ ? Getattr(templ,"templateparms") : 0;
+			  Node *primary_template = Swig_symbol_clookup(tname, 0);
 
-                          ParmList *temparms;
-                          if (specialized) temparms = CopyParmList($7);
-                          else temparms = CopyParmList(tparms);
-
-                          /* Create typedef's and arguments */
-                          p = $7;
-                          tp = temparms;
-                          if (!p && ParmList_len(p) != ParmList_len(temparms)) {
-                            /* we have no template parameters supplied in %template for a template that has default args*/
-                            p = tp;
-                            def_supplied = 1;
-                          }
-
-                          while (p) {
-                            String *value = Getattr(p,"value");
-                            if (def_supplied) {
-                              Setattr(p,"default","1");
-                            }
-                            if (value) {
-                              Setattr(tp,"value",value);
-                            } else {
-                              SwigType *ty = Getattr(p,"type");
-                              if (ty) {
-                                Setattr(tp,"type",ty);
-                              }
-                              Delattr(tp,"value");
-                            }
-			    /* fix default arg values */
-			    if (targs) {
-			      Parm *pi = temparms;
-			      Parm *ti = targs;
-			      String *tv = Getattr(tp,"value");
-			      if (!tv) tv = Getattr(tp,"type");
-			      while(pi != tp && ti && pi) {
-				String *name = Getattr(ti,"name");
-				String *value = Getattr(pi,"value");
-				if (!value) value = Getattr(pi,"type");
-				Replaceid(tv, name, value);
-				pi = nextSibling(pi);
-				ti = nextSibling(ti);
-			      }
-			    }
-                            p = nextSibling(p);
-                            tp = nextSibling(tp);
-                            if (!p && tp) {
-                              p = tp;
-                              def_supplied = 1;
-                            } else if (p && !tp) { /* Variadic template - tp < p */
-			      SWIG_WARN_NODE_BEGIN(nn);
-                              Swig_warning(WARN_CPP11_VARIADIC_TEMPLATE,cparse_file, cparse_line,"Only the first variadic template argument is currently supported.\n");
-			      SWIG_WARN_NODE_END(nn);
-                              break;
-                            }
-                          }
+			  /* Expand the template */
+			  ParmList *temparms = Swig_cparse_template_parms_expand($7, primary_template);
 
                           templnode = copy_node(nn);
 			  update_nested_classes(templnode); /* update classes nested within template */
@@ -3765,7 +3711,7 @@ cpp_class_decl: storage_class cpptype idcolon class_virt_specifier_opt inherit L
 		     Delete(fbase);
 		     Delete(tbase);
 		   }
-                   if (strcmp($2,"class") == 0) {
+                   if (Strcmp($2, "class") == 0) {
 		     cplus_mode = CPLUS_PRIVATE;
 		   } else {
 		     cplus_mode = CPLUS_PUBLIC;
@@ -3982,7 +3928,7 @@ cpp_class_decl: storage_class cpptype idcolon class_virt_specifier_opt inherit L
 	       Swig_features_get(Swig_cparse_features(), Namespaceprefix, 0, 0, $<node>$);
 	       /* save yyrename to the class attribute, to be used later in add_symbols()*/
 	       Setattr($<node>$, "class_rename", make_name($<node>$,0,0));
-	       if (strcmp($2,"class") == 0) {
+	       if (Strcmp($2, "class") == 0) {
 		 cplus_mode = CPLUS_PRIVATE;
 	       } else {
 		 cplus_mode = CPLUS_PUBLIC;
@@ -4450,7 +4396,7 @@ template_parms : templateparameter templateparameterstail {
                    ;
 
 templateparameter : templcpptype def_args {
-		    $$ = NewParmWithoutFileLineInfo(NewString($1), 0);
+		    $$ = NewParmWithoutFileLineInfo($1, 0);
 		    Setfile($$, cparse_file);
 		    Setline($$, cparse_line);
 		    Setattr($$, "value", $2.rawval ? $2.rawval : $2.val);
@@ -4484,12 +4430,11 @@ templateparameter : templcpptype def_args {
 			const char *t = Strchr(type, ' ');
 			Setattr(p, "name", t + 1);
 			Setattr(p, "type", NewStringWithSize(type, t - Char(type)));
-		      } else if ((Strncmp(type, "class... ", 9) == 0) || (Strncmp(type, "typename... ", 12) == 0)) {
+		      } else if ((Strncmp(type, "v.class ", 8) == 0) || (Strncmp(type, "v.typename ", 11) == 0)) {
 			/* Variadic template args */
 			const char *t = Strchr(type, ' ');
 			Setattr(p, "name", t + 1);
 			Setattr(p, "type", NewStringWithSize(type, t - Char(type)));
-			Setattr(p, "variadic", "1");
 		      }
 		    }
                   }
@@ -5568,6 +5513,7 @@ declarator :  pointer notso_direct_declarator {
 		Delete($$.type);
 	      }
 	      $$.type = $1;
+	      SwigType_add_variadic($$.type);
            }
            | pointer AND ELLIPSIS notso_direct_declarator {
               $$ = $4;
@@ -5577,6 +5523,7 @@ declarator :  pointer notso_direct_declarator {
 		Delete($$.type);
 	      }
 	      $$.type = $1;
+	      SwigType_add_variadic($$.type);
            }
            | pointer LAND ELLIPSIS notso_direct_declarator {
               $$ = $4;
@@ -5586,15 +5533,13 @@ declarator :  pointer notso_direct_declarator {
 		Delete($$.type);
 	      }
 	      $$.type = $1;
-           }
-           | ELLIPSIS direct_declarator {
-              $$ = $2;
-	      if (!$$.type) $$.type = NewStringEmpty();
+	      SwigType_add_variadic($$.type);
            }
            | AND ELLIPSIS notso_direct_declarator {
 	     $$ = $3;
 	     $$.type = NewStringEmpty();
 	     SwigType_add_reference($$.type);
+	     SwigType_add_variadic($$.type);
 	     if ($3.type) {
 	       SwigType_push($$.type,$3.type);
 	       Delete($3.type);
@@ -5606,6 +5551,7 @@ declarator :  pointer notso_direct_declarator {
 	     $$ = $3;
 	     $$.type = NewStringEmpty();
 	     SwigType_add_rvalue_reference($$.type);
+	     SwigType_add_variadic($$.type);
 	     if ($3.type) {
 	       SwigType_push($$.type,$3.type);
 	       Delete($3.type);
@@ -5616,6 +5562,7 @@ declarator :  pointer notso_direct_declarator {
 
 	     $$ = $4;
 	     SwigType_add_memberpointer(t,$1);
+	     SwigType_add_variadic(t);
 	     if ($$.type) {
 	       SwigType_push(t,$$.type);
 	       Delete($$.type);
@@ -5626,6 +5573,7 @@ declarator :  pointer notso_direct_declarator {
 	     SwigType *t = NewStringEmpty();
 	     $$ = $5;
 	     SwigType_add_memberpointer(t,$2);
+	     SwigType_add_variadic(t);
 	     SwigType_push($1,t);
 	     if ($$.type) {
 	       SwigType_push($1,$$.type);
@@ -5638,6 +5586,7 @@ declarator :  pointer notso_direct_declarator {
 	     $$ = $6;
 	     SwigType_add_memberpointer($1,$2);
 	     SwigType_add_reference($1);
+	     SwigType_add_variadic($1);
 	     if ($$.type) {
 	       SwigType_push($1,$$.type);
 	       Delete($$.type);
@@ -5648,6 +5597,7 @@ declarator :  pointer notso_direct_declarator {
 	     $$ = $6;
 	     SwigType_add_memberpointer($1,$2);
 	     SwigType_add_rvalue_reference($1);
+	     SwigType_add_variadic($1);
 	     if ($$.type) {
 	       SwigType_push($1,$$.type);
 	       Delete($$.type);
@@ -5659,6 +5609,7 @@ declarator :  pointer notso_direct_declarator {
 	     $$ = $5;
 	     SwigType_add_memberpointer(t,$1);
 	     SwigType_add_reference(t);
+	     SwigType_add_variadic(t);
 	     if ($$.type) {
 	       SwigType_push(t,$$.type);
 	       Delete($$.type);
@@ -5670,6 +5621,7 @@ declarator :  pointer notso_direct_declarator {
 	     $$ = $5;
 	     SwigType_add_memberpointer(t,$1);
 	     SwigType_add_rvalue_reference(t);
+	     SwigType_add_variadic(t);
 	     if ($$.type) {
 	       SwigType_push(t,$$.type);
 	       Delete($$.type);
@@ -5925,11 +5877,12 @@ direct_declarator : idcolon {
 		  }
                   ;
 
-abstract_declarator : pointer {
+abstract_declarator : pointer variadic_opt {
 		    $$.type = $1;
                     $$.id = 0;
 		    $$.parms = 0;
 		    $$.have_parms = 0;
+		    if ($2) SwigType_add_variadic($$.type);
                   }
                   | pointer direct_abstract_declarator { 
                      $$ = $2;
@@ -5937,19 +5890,21 @@ abstract_declarator : pointer {
 		     $$.type = $1;
 		     Delete($2.type);
                   }
-                  | pointer AND {
+                  | pointer AND variadic_opt {
 		    $$.type = $1;
 		    SwigType_add_reference($$.type);
 		    $$.id = 0;
 		    $$.parms = 0;
 		    $$.have_parms = 0;
+		    if ($3) SwigType_add_variadic($$.type);
 		  }
-                  | pointer LAND {
+                  | pointer LAND variadic_opt {
 		    $$.type = $1;
 		    SwigType_add_rvalue_reference($$.type);
 		    $$.id = 0;
 		    $$.parms = 0;
 		    $$.have_parms = 0;
+		    if ($3) SwigType_add_variadic($$.type);
 		  }
                   | pointer AND direct_abstract_declarator {
 		    $$ = $3;
@@ -5990,19 +5945,21 @@ abstract_declarator : pointer {
 		      Delete($2.type);
 		    }
                   }
-                  | AND {
+                  | AND variadic_opt {
                     $$.id = 0;
                     $$.parms = 0;
 		    $$.have_parms = 0;
                     $$.type = NewStringEmpty();
 		    SwigType_add_reference($$.type);
+		    if ($2) SwigType_add_variadic($$.type);
                   }
-                  | LAND {
+                  | LAND variadic_opt {
                     $$.id = 0;
                     $$.parms = 0;
 		    $$.have_parms = 0;
                     $$.type = NewStringEmpty();
 		    SwigType_add_rvalue_reference($$.type);
+		    if ($2) SwigType_add_variadic($$.type);
                   }
                   | idcolon DSTAR { 
 		    $$.type = NewStringEmpty();
@@ -6203,7 +6160,9 @@ rawtype        : type_qualifier type_right {
                    $$ = $2;
 	           SwigType_push($$,$1);
                }
-               | type_right { $$ = $1; }
+	       | type_right {
+		  $$ = $1;
+	       }
                | type_right type_qualifier {
 		  $$ = $1;
 	          SwigType_push($$,$2);
@@ -6212,6 +6171,10 @@ rawtype        : type_qualifier type_right {
 		  $$ = $2;
 	          SwigType_push($$,$3);
 	          SwigType_push($$,$1);
+	       }
+	       | rawtype ELLIPSIS {
+		  $$ = $1;
+		  SwigType_add_variadic($$);
 	       }
                ;
 
@@ -6920,7 +6883,7 @@ exprcompound   : expr PLUS expr {
                }
                ;
 
-variadic      : ELLIPSIS {
+variadic_opt  : ELLIPSIS {
 	        $$ = NewString("...");
 	      }
 	      | empty {
@@ -6965,7 +6928,7 @@ base_list      : base_specifier {
 
 base_specifier : opt_virtual {
 		 $<intvalue>$ = cparse_line;
-	       } idcolon variadic {
+	       } idcolon variadic_opt {
 		 $$ = NewHash();
 		 Setfile($$,cparse_file);
 		 Setline($$,$<intvalue>2);
@@ -6978,12 +6941,13 @@ base_specifier : opt_virtual {
                  } else {
 		   Setattr($$,"access","public");
 		 }
-		 if ($4)
-		   SetFlag($$, "variadic");
+		 if ($4) {
+		   SwigType_add_variadic(Getattr($$, "name"));
+		 }
                }
 	       | opt_virtual access_specifier {
 		 $<intvalue>$ = cparse_line;
-	       } opt_virtual idcolon variadic {
+	       } opt_virtual idcolon variadic_opt {
 		 $$ = NewHash();
 		 Setfile($$,cparse_file);
 		 Setline($$,$<intvalue>3);
@@ -6994,8 +6958,9 @@ base_specifier : opt_virtual {
 	         if (Strcmp($2,"public") != 0) {
 		   Swig_warning(WARN_PARSE_PRIVATE_INHERIT, Getfile($$), Getline($$), "%s inheritance from base '%s' (ignored).\n", $2, SwigType_namestr($5));
 		 }
-		 if ($6)
-		   SetFlag($$, "variadic");
+		 if ($6) {
+		   SwigType_add_variadic(Getattr($$, "name"));
+		 }
                }
                ;
 
@@ -7004,20 +6969,22 @@ access_specifier :  PUBLIC { $$ = (char*)"public"; }
                | PROTECTED { $$ = (char*)"protected"; }
                ;
 
-templcpptype   : CLASS { 
-                   $$ = (char*)"class"; 
+templcpptype   : CLASS {
+                   $$ = NewString("class");
 		   if (!inherit_list) last_cpptype = $$;
                }
-               | TYPENAME { 
-                   $$ = (char *)"typename"; 
+               | TYPENAME {
+                   $$ = NewString("typename");
 		   if (!inherit_list) last_cpptype = $$;
                }
                | CLASS ELLIPSIS {
-                   $$ = (char *)"class..."; 
+		   $$ = NewString("class");
+		   $$ = SwigType_add_variadic($$);
 		   if (!inherit_list) last_cpptype = $$;
                }
                | TYPENAME ELLIPSIS {
-                   $$ = (char *)"typename..."; 
+		   $$ = NewString("typename");
+		   $$ = SwigType_add_variadic($$);
 		   if (!inherit_list) last_cpptype = $$;
                }
                ;
@@ -7025,26 +6992,26 @@ templcpptype   : CLASS {
 cpptype        : templcpptype {
                  $$ = $1;
                }
-               | STRUCT { 
-                   $$ = (char*)"struct"; 
+               | STRUCT {
+                   $$ = NewString("struct");
 		   if (!inherit_list) last_cpptype = $$;
                }
                | UNION {
-                   $$ = (char*)"union"; 
+                   $$ = NewString("union");
 		   if (!inherit_list) last_cpptype = $$;
                }
                ;
 
 classkey       : CLASS {
-                   $$ = (char*)"class";
+                   $$ = NewString("class");
 		   if (!inherit_list) last_cpptype = $$;
                }
                | STRUCT {
-                   $$ = (char*)"struct";
+                   $$ = NewString("struct");
 		   if (!inherit_list) last_cpptype = $$;
                }
                | UNION {
-                   $$ = (char*)"union";
+                   $$ = NewString("union");
 		   if (!inherit_list) last_cpptype = $$;
                }
                ;
