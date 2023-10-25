@@ -1,5 +1,5 @@
-%module cpp11_template_parameters_decltype
-
+%module xxx
+// This is a copy of Examples/test-suite/cpp11_template_parameters_decltype
 %inline %{
 // Github issue #1589
 template <decltype(true) X = true>
@@ -14,7 +14,7 @@ void A() { }
 %include <std_vector.i>
 %include <std_map.i>
 
-#pragma SWIG nowarn=SWIGWARN_CPP11_DECLTYPE
+//#pragma SWIG nowarn=SWIGWARN_CPP11_DECLTYPE
 
 %{
 // Simple implementation of helper functions required in test below
