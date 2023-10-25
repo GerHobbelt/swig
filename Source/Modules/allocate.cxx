@@ -766,19 +766,26 @@ Allocate():
 	Delattr(n, "allocate:default_constructor");
       }
       if (!Getattr(n, "allocate:default_constructor")) {
-	/* Check base classes */
-	List *bases = Getattr(n, "allbases");
-	int allows_default = 1;
+	// No default constructor if either the default constructor or copy constructor is declared as deleted
+	if (!GetFlag(n, "allocate:deleted_default_constructor") && !GetFlag(n, "allocate:deleted_copy_constructor")) {
+	  /* Check base classes */
+	  List *bases = Getattr(n, "allbases");
+	  int allows_default = 1;
 
-	for (int i = 0; i < Len(bases); i++) {
-	  Node *n = Getitem(bases, i);
-	  /* If base class does not allow default constructor, we don't allow it either */
-	  if (!Getattr(n, "allocate:default_constructor") && (!Getattr(n, "allocate:default_base_constructor"))) {
-	    allows_default = 0;
+	  for (int i = 0; i < Len(bases); i++) {
+	    Node *n = Getitem(bases, i);
+	    /* If base class does not allow default constructor, we don't allow it either */
+	    if (!Getattr(n, "allocate:default_constructor") && (!Getattr(n, "allocate:default_base_constructor"))) {
+	      allows_default = 0;
+	    }
+	    /* not constructible if base destructor is deleted */
+	    if (Getattr(n, "allocate:deleted_default_destructor")) {
+	      allows_default = 0;
+	    }
 	  }
-	}
-	if (allows_default) {
-	  Setattr(n, "allocate:default_constructor", "1");
+	  if (allows_default) {
+	    Setattr(n, "allocate:default_constructor", "1");
+	  }
 	}
       }
     }
@@ -788,44 +795,55 @@ Allocate():
 	Delattr(n, "allocate:copy_constructor_non_const");
       }
       if (!Getattr(n, "allocate:copy_constructor")) {
-	/* Check base classes */
-	List *bases = Getattr(n, "allbases");
-	int allows_copy = 1;
-	int must_be_copy_non_const = 0;
+	// No copy constructor if the copy constructor is declared as deleted
+	if (!GetFlag(n, "allocate:deleted_copy_constructor")) {
+	  /* Check base classes */
+	  List *bases = Getattr(n, "allbases");
+	  int allows_copy = 1;
+	  int must_be_copy_non_const = 0;
 
-	for (int i = 0; i < Len(bases); i++) {
-	  Node *n = Getitem(bases, i);
-	  /* If base class does not allow copy constructor, we don't allow it either */
-	  if (!Getattr(n, "allocate:copy_constructor") && (!Getattr(n, "allocate:copy_base_constructor"))) {
-	    allows_copy = 0;
+	  for (int i = 0; i < Len(bases); i++) {
+	    Node *n = Getitem(bases, i);
+	    /* If base class does not allow copy constructor, we don't allow it either */
+	    if (!Getattr(n, "allocate:copy_constructor") && (!Getattr(n, "allocate:copy_base_constructor"))) {
+	      allows_copy = 0;
+	    }
+	    /* not constructible if base destructor is deleted */
+	    if (Getattr(n, "allocate:deleted_default_destructor")) {
+	      allows_copy = 0;
+	    }
+	    if (Getattr(n, "allocate:copy_constructor_non_const") || (Getattr(n, "allocate:copy_base_constructor_non_const"))) {
+	      must_be_copy_non_const = 1;
+	    }
 	  }
-	  if (Getattr(n, "allocate:copy_constructor_non_const") || (Getattr(n, "allocate:copy_base_constructor_non_const"))) {
-	    must_be_copy_non_const = 1;
+	  if (allows_copy) {
+	    Setattr(n, "allocate:copy_constructor", "1");
 	  }
-	}
-	if (allows_copy) {
-	  Setattr(n, "allocate:copy_constructor", "1");
-	}
-	if (must_be_copy_non_const) {
-	  Setattr(n, "allocate:copy_constructor_non_const", "1");
+	  if (must_be_copy_non_const) {
+	    Setattr(n, "allocate:copy_constructor_non_const", "1");
+	  }
 	}
       }
     }
 
     if (!Getattr(n, "allocate:has_destructor")) {
       /* No destructor was defined */
-      List *bases = Getattr(n, "allbases");
-      int allows_destruct = 1;
+      /* No destructor if the destructor is declared as deleted */
+      if (!GetFlag(n, "allocate:deleted_default_destructor")) {
+	/* Check base classes */
+	List *bases = Getattr(n, "allbases");
+	int allows_destruct = 1;
 
-      for (int i = 0; i < Len(bases); i++) {
-	Node *n = Getitem(bases, i);
-	/* If base class does not allow default destructor, we don't allow it either */
-	if (!Getattr(n, "allocate:default_destructor") && (!Getattr(n, "allocate:default_base_destructor"))) {
-	  allows_destruct = 0;
+	for (int i = 0; i < Len(bases); i++) {
+	  Node *n = Getitem(bases, i);
+	  /* If base class does not allow default destructor, we don't allow it either */
+	  if (!Getattr(n, "allocate:default_destructor") && (!Getattr(n, "allocate:default_base_destructor"))) {
+	    allows_destruct = 0;
+	  }
 	}
-      }
-      if (allows_destruct) {
-	Setattr(n, "allocate:default_destructor", "1");
+	if (allows_destruct) {
+	  Setattr(n, "allocate:default_destructor", "1");
+	}
       }
     }
 
@@ -837,8 +855,8 @@ Allocate():
       for (int i = 0; i < Len(bases); i++) {
 	Node *n = Getitem(bases, i);
 	/* If base class does not allow assignment, we don't allow it either */
-	if (Getattr(n, "allocate:has_assign")) {
-	  allows_assign = !Getattr(n, "allocate:noassign");
+	if (Getattr(n, "allocate:noassign")) {
+	  allows_assign = 0;
 	}
       }
       if (!allows_assign) {
@@ -900,19 +918,19 @@ Allocate():
 
       /* default constructor */
       if (!abstract && !GetFlag(n, "feature:nodefaultctor") && odefault) {
-	if (!Getattr(n, "has_constructor") && !Getattr(n, "allocate:has_constructor") && Getattr(n, "allocate:default_constructor")) {
+	if (!Getattr(n, "allocate:has_constructor") && Getattr(n, "allocate:default_constructor")) {
 	  addDefaultConstructor(n);
 	}
       }
       /* copy constructor */
       if (CPlusPlus && !abstract && GetFlag(n, "feature:copyctor")) {
-	if (!Getattr(n, "has_copy_constructor") && !Getattr(n, "allocate:has_copy_constructor") && Getattr(n, "allocate:copy_constructor")) {
+	if (!Getattr(n, "allocate:has_copy_constructor") && Getattr(n, "allocate:copy_constructor")) {
 	  addCopyConstructor(n);
 	}
       }
       /* default destructor */
       if (!GetFlag(n, "feature:nodefaultdtor") && odefault) {
-	if (!Getattr(n, "has_destructor") && (!Getattr(n, "allocate:has_destructor")) && Getattr(n, "allocate:default_destructor")) {
+	if (!Getattr(n, "allocate:has_destructor") && Getattr(n, "allocate:default_destructor")) {
 	  addDestructor(n);
 	}
       }
@@ -1201,30 +1219,37 @@ Allocate():
   virtual int constructorDeclaration(Node *n) {
     if (!inclass)
       return SWIG_OK;
-    Parm *parms = Getattr(n, "parms");
-    AccessMode access_mode = accessModeFromString(Getattr(n, "access"));
 
+    Parm *parms = Getattr(n, "parms");
+    bool deleted_constructor = (GetFlag(n, "deleted"));
+    bool default_constructor = !ParmList_numrequired(parms);
+    AccessMode access_mode = accessModeFromString(Getattr(n, "access"));
     process_exceptions(n);
-    if (!extendmode) {
-      if (!ParmList_numrequired(parms)) {
-	/* Class does define a default constructor */
-	/* However, we had better see where it is defined */
-	if (access_mode == PUBLIC) {
-	  Setattr(inclass, "allocate:default_constructor", "1");
-	} else if (access_mode == PROTECTED) {
-	  Setattr(inclass, "allocate:default_base_constructor", "1");
+
+    if (!deleted_constructor) {
+      if (!extendmode) {
+	if (default_constructor) {
+	  /* Class does define a default constructor */
+	  /* However, we had better see where it is defined */
+	  if (access_mode == PUBLIC) {
+	    Setattr(inclass, "allocate:default_constructor", "1");
+	  } else if (access_mode == PROTECTED) {
+	    Setattr(inclass, "allocate:default_base_constructor", "1");
+	  }
 	}
-      }
-      /* Class defines some kind of constructor. May or may not be public */
-      Setattr(inclass, "allocate:has_constructor", "1");
-      if (access_mode == PUBLIC) {
+	/* Class defines some kind of constructor. May or may not be public */
+	Setattr(inclass, "allocate:has_constructor", "1");
+	if (access_mode == PUBLIC) {
+	  Setattr(inclass, "allocate:public_constructor", "1");
+	}
+      } else {
+	Setattr(inclass, "allocate:has_constructor", "1");
 	Setattr(inclass, "allocate:public_constructor", "1");
       }
     } else {
-      Setattr(inclass, "allocate:has_constructor", "1");
-      Setattr(inclass, "allocate:public_constructor", "1");
+      if (default_constructor && !extendmode)
+	SetFlag(inclass, "allocate:deleted_default_constructor");
     }
-
 
     /* See if this is a copy constructor */
     if (parms && (ParmList_numrequired(parms) == 1)) {
@@ -1266,21 +1291,26 @@ Allocate():
       Delete(tn);
 
       if (copy_constructor) {
-	Setattr(n, "copy_constructor", "1");
-	Setattr(inclass, "allocate:has_copy_constructor", "1");
-	if (access_mode == PUBLIC) {
-	  Setattr(inclass, "allocate:copy_constructor", "1");
-	} else if (access_mode == PROTECTED) {
-	  Setattr(inclass, "allocate:copy_base_constructor", "1");
-	}
-	if (copy_constructor_non_const) {
-	  Setattr(n, "copy_constructor_non_const", "1");
-	  Setattr(inclass, "allocate:has_copy_constructor_non_const", "1");
+	if (!deleted_constructor) {
+	  Setattr(n, "copy_constructor", "1");
+	  Setattr(inclass, "allocate:has_copy_constructor", "1");
 	  if (access_mode == PUBLIC) {
-	    Setattr(inclass, "allocate:copy_constructor_non_const", "1");
+	    Setattr(inclass, "allocate:copy_constructor", "1");
 	  } else if (access_mode == PROTECTED) {
-	    Setattr(inclass, "allocate:copy_base_constructor_non_const", "1");
+	    Setattr(inclass, "allocate:copy_base_constructor", "1");
 	  }
+	  if (copy_constructor_non_const) {
+	    Setattr(n, "copy_constructor_non_const", "1");
+	    Setattr(inclass, "allocate:has_copy_constructor_non_const", "1");
+	    if (access_mode == PUBLIC) {
+	      Setattr(inclass, "allocate:copy_constructor_non_const", "1");
+	    } else if (access_mode == PROTECTED) {
+	      Setattr(inclass, "allocate:copy_base_constructor_non_const", "1");
+	    }
+	  }
+	} else {
+	  if (!extendmode)
+	    SetFlag(inclass, "allocate:deleted_copy_constructor");
 	}
       }
     }
@@ -1291,19 +1321,26 @@ Allocate():
     (void) n;
     if (!inclass)
       return SWIG_OK;
-    if (!extendmode) {
-      Setattr(inclass, "allocate:has_destructor", "1");
-      if (cplus_mode == PUBLIC) {
+
+    if (!GetFlag(n, "deleted")) {
+      if (!extendmode) {
+	Setattr(inclass, "allocate:has_destructor", "1");
+	if (cplus_mode == PUBLIC) {
+	  Setattr(inclass, "allocate:default_destructor", "1");
+	} else if (cplus_mode == PROTECTED) {
+	  Setattr(inclass, "allocate:default_base_destructor", "1");
+	} else if (cplus_mode == PRIVATE) {
+	  Setattr(inclass, "allocate:private_destructor", "1");
+	}
+      } else {
+	Setattr(inclass, "allocate:has_destructor", "1");
 	Setattr(inclass, "allocate:default_destructor", "1");
-      } else if (cplus_mode == PROTECTED) {
-	Setattr(inclass, "allocate:default_base_destructor", "1");
-      } else if (cplus_mode == PRIVATE) {
-	Setattr(inclass, "allocate:private_destructor", "1");
       }
     } else {
-      Setattr(inclass, "allocate:has_destructor", "1");
-      Setattr(inclass, "allocate:default_destructor", "1");
+      if (!extendmode)
+	SetFlag(inclass, "allocate:deleted_default_destructor");
     }
+
     return SWIG_OK;
   }
 
@@ -1464,7 +1501,7 @@ static void addDestructor(Node *n) {
 	appendChild(n, access);
 	appendChild(n, cn);
 	Setattr(n, "has_destructor", "1");
-	Setattr(n, "allocate:destructor", "1");
+	Setattr(n, "allocate:has_destructor", "1");
 	Delete(access);
       }
     }

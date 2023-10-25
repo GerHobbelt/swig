@@ -7,6 +7,39 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-09-03: wsfulton
+            https://sourceforge.net/p/swig/bugs/1006/
+            Fix incorrect variable setters being generated when the type of the
+            variable is not assignable, due to variable type inheriting a private
+            assignment operator further up the inheritance chain (further up than
+            the immediate base).
+
+2023-09-03: wsfulton
+            [Guile, Ocaml, Perl] Don't attempt to generate a setter when wrapping
+            variables which have a private assignment operator as assignment is not
+            possible. This now matches the behaviour of all the other target languages.
+
+2023-09-02: wsfulton
+            Fix problems wrapping deleted destructors. Derived classes are not
+            constructible, so don't attempt to generate default constructor or
+            copy constructor wrappers.
+
+              struct StackOnly1 {
+                // Only constructible on the stack
+                ~StackOnly1() = delete;
+              };
+              struct StackOnlyDerived1 : StackOnly1 {
+                // this class is not constructible due to deleted base destructor
+              };
+
+2023-09-02: wsfulton
+            Fix %copyctor feature when used on classes with deleted copy constructors.
+            A default constructor wrapper was sometimes incorrectly generated.
+
+2023-09-02: wsfulton
+            #1644 Fix wrapping types passed by value where the type has a deleted
+            default constructor.
+
 2023-08-16: shadchin
             [Python] #2665 Fix missing-field-initializers warning to provide support
             for python-3.12.

@@ -2632,7 +2632,6 @@ int Language::constructorDeclaration(Node *n) {
       constructorHandler(n);
     }
   }
-  Setattr(CurrentClass, "has_constructor", "1");
 
   Swig_restore(n);
   return SWIG_OK;
@@ -3739,6 +3738,7 @@ void Language::setOverloadResolutionTemplates(String *argc, String *argv) {
 int Language::is_assignable(Node *n) {
   if (GetFlag(n, "feature:immutable"))
     return 0;
+  int assignable = 1;
   SwigType *type = Getattr(n, "type");
   Node *cn = 0;
   SwigType *ftd = SwigType_typedef_resolve_all(type);
@@ -3749,16 +3749,14 @@ int Language::is_assignable(Node *n) {
       if ((Strcmp(nodeType(cn), "class") == 0)) {
 	if (Getattr(cn, "allocate:noassign")) {
 	  SetFlag(n, "feature:immutable");
-	  Delete(ftd);
-	  Delete(td);
-	  return 0;
+	  assignable = 0;
 	}
       }
     }
   }
   Delete(ftd);
   Delete(td);
-  return 1;
+  return assignable;
 }
 
 String *Language::runtimeCode() {
