@@ -7,6 +7,9 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-04-26: mmomtchev
+	    [Javascript] Take into account numinputs when counting arguments.
+
 2023-04-24: olly
 	    [PHP] Add throws typemaps for std:string* and const std::string*.
 
@@ -88,6 +91,13 @@ Version 4.2.0 (in progress)
 	    it in the SWIG 4.2.x release series.
 
 	    *** POTENTIAL INCOMPATIBILITY ***
+
+2023-04-05: wsfulton
+            [Python] #2515 Add support for all STL containers to be constructible from a Python set.
+
+            The previous implementation used the Python Sequence Protocol to convert from Python types
+            to STL containers. The new implementation uses the Python Iterator Protocol instead and
+            thereby can convert from a Python set too.
 
 2023-03-25: alatina 
             [Octave] #2512 Add support for Octave 8.1.
