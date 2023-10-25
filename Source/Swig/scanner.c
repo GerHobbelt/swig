@@ -1031,9 +1031,8 @@ static int look(Scanner *s) {
 	  return SWIG_TOKEN_BOOL;
 	else if (Strcmp(s->text, "false") == 0)
 	  return SWIG_TOKEN_BOOL;
-	}
+      }
       return SWIG_TOKEN_ID;
-      break;
 
     case 77: /*identifier or wide string literal*/
       if ((c = nextchar(s)) == 0)
