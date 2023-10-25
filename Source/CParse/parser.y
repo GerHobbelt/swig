@@ -1669,7 +1669,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token <str> CHARCONST WCHARCONST
 %token <dtype> NUM_INT NUM_DOUBLE NUM_FLOAT NUM_LONGDOUBLE NUM_UNSIGNED NUM_LONG NUM_ULONG NUM_LONGLONG NUM_ULONGLONG NUM_BOOL
 %token <intvalue> TYPEDEF
-%token <type> TYPE_INT TYPE_UNSIGNED TYPE_SHORT TYPE_LONG TYPE_FLOAT TYPE_DOUBLE TYPE_CHAR TYPE_WCHAR TYPE_VOID TYPE_SIGNED TYPE_BOOL TYPE_COMPLEX TYPE_TYPEDEF TYPE_RAW TYPE_NON_ISO_INT8 TYPE_NON_ISO_INT16 TYPE_NON_ISO_INT32 TYPE_NON_ISO_INT64
+%token <type> TYPE_INT TYPE_UNSIGNED TYPE_SHORT TYPE_LONG TYPE_FLOAT TYPE_DOUBLE TYPE_CHAR TYPE_WCHAR TYPE_VOID TYPE_SIGNED TYPE_BOOL TYPE_COMPLEX TYPE_RAW TYPE_NON_ISO_INT8 TYPE_NON_ISO_INT16 TYPE_NON_ISO_INT32 TYPE_NON_ISO_INT64
 %token LPAREN RPAREN COMMA SEMI EXTERN LBRACE RBRACE PERIOD ELLIPSIS
 %token CONST_QUAL VOLATILE REGISTER STRUCT UNION EQUAL SIZEOF MODULE LBRACKET RBRACKET
 %token BEGINFILE ENDOFFILE
@@ -3328,15 +3328,10 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "name", $3.id);
 	      Setattr($$, "decl", $3.type);
 	      Setattr($$, "parms", $3.parms);
-	      Setattr($$, "value", $4.val);
 	      Setattr($$, "throws", $4.throws);
 	      Setattr($$, "throw", $4.throwf);
 	      Setattr($$, "noexcept", $4.nexcept);
 	      Setattr($$, "final", $4.final);
-
-	      if ($4.bitfield) {
-		Setattr($$, "bitfield", $4.bitfield);
-	      }
 
 	      if (Strstr($3.id, "::")) {
                 String *p = Swig_scopename_prefix($3.id);
@@ -3427,9 +3422,6 @@ initializer   : def_args
 cpp_alternate_rettype : primitive_type
               | TYPE_BOOL
               | TYPE_VOID
-/*
-              | TYPE_TYPEDEF template_decl { $$ = NewStringf("%s%s",$1,$2); }
-*/
               | TYPE_RAW
               | idcolon { $$ = $1; }
               | idcolon AND {
@@ -5059,9 +5051,6 @@ anonymous_bitfield :  storage_class anon_bitfield_type COLON expr SEMI { Delete(
 anon_bitfield_type : primitive_type
                | TYPE_BOOL
                | TYPE_VOID
-/*
-               | TYPE_TYPEDEF template_decl { $$ = NewStringf("%s%s",$1,$2); }
-*/
                | TYPE_RAW
 
                | idcolon { $$ = $1; }
@@ -6226,9 +6215,6 @@ rawtype        : type_qualifier type_right {
 type_right     : primitive_type
                | TYPE_BOOL
                | TYPE_VOID
-/*
-               | TYPE_TYPEDEF template_decl { $$ = NewStringf("%s%s",$1,$2); }
-*/
                | c_enum_key idcolon { $$ = NewStringf("enum %s", $2); }
                | TYPE_RAW
 
@@ -6412,8 +6398,8 @@ type_specifier : TYPE_INT {
                 }
                ;
 
-definetype     : { /* scanner_check_typedef(); */ } expr {
-                   $$ = $2;
+definetype     : expr {
+                   $$ = $1;
 		   if ($$.type == T_STRING) {
 		     $$.rawval = NewStringf("\"%(escape)s\"",$$.val);
 		   } else if ($$.type != T_CHAR && $$.type != T_WSTRING && $$.type != T_WCHAR) {
@@ -6426,7 +6412,6 @@ definetype     : { /* scanner_check_typedef(); */ } expr {
 		   $$.throwf = 0;
 		   $$.nexcept = 0;
 		   $$.final = 0;
-		   scanner_ignore_typedef();
                 }
                 | default_delete
                 ;
