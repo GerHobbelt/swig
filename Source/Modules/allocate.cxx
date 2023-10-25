@@ -17,6 +17,9 @@
  * Once the analysis is complete, the non-explicit/implied default constructors
  * and destructors are added to the parse tree. Implied copy constructors are
  * added too if requested via the copyctor feature.
+ *
+ * This module also is responsible for adding in using declarations from base
+ * class members into the parse tree.
  * ----------------------------------------------------------------------------- */
 
 #include "swigmod.h"
@@ -800,8 +803,13 @@ Allocate():
       } else {
 	ns = 0;
       }
-      // Note that TypePass::usingDeclaration has warned when using member is not found (when ns is zero)
-      if (ns) {
+      if (!ns) {
+	if (is_public(n)) {
+	  Swig_warning(WARN_PARSE_USING_UNDEF, Getfile(n), Getline(n), "Nothing known about '%s'.\n", SwigType_namestr(Getattr(n, "uname")));
+	}
+      } else if (Equal(nodeType(ns), "constructor") && !GetFlag(n, "usingctor")) {
+	Swig_warning(WARN_PARSE_USING_CONSTRUCTOR, Getfile(n), Getline(n), "Using declaration '%s' for inheriting constructors uses base '%s' which is not an immediate base of '%s'.\n", SwigType_namestr(Getattr(n, "uname")), SwigType_namestr(Getattr(ns, "name")), SwigType_namestr(Getattr(parentNode(n), "name")));
+      } else {
 	String *ntype = nodeType(ns);
 	if (Equal(ntype, "cdecl") || Equal(ntype, "constructor")) {
 	  if (!checkAttribute(ns, "storage", "typedef")) {
@@ -812,6 +820,7 @@ Allocate():
 	      Node *unodes = 0, *last_unodes = 0;
 	      int ccount = 0;
 	      String *symname = Getattr(n, "sym:name");
+	      Node *parent = parentNode(n);
 
 	      while (c) {
 		if (Strcmp(nodeType(c), ntype) == 0) {
@@ -822,7 +831,7 @@ Allocate():
 			|| GetFlag(c, "feature:ignore"))) {
 
 		    String *csymname = Getattr(c, "sym:name");
-		    bool using_inherited_constructor_symname_okay = Equal(nodeType(c), "constructor") && Equal(symname, Getattr(parentNode(n), "sym:name"));
+		    bool using_inherited_constructor_symname_okay = Equal(nodeType(c), "constructor") && Equal(symname, Getattr(parent, "sym:name"));
 		    if (!csymname || Equal(csymname, symname) || using_inherited_constructor_symname_okay) {
 		      String *decl = Getattr(c, "decl");
 		      int match = 0;
@@ -859,7 +868,6 @@ Allocate():
 		      Setattr(nn, "sym:symtab", st);
 		      // The real parent is the "using" declaration node, but subsequent code generally handles
 		      // and expects a class member to point to the parent class node
-		      Node *parent = parentNode(n);
 		      Setattr(nn, "parentNode", parent);
 
 		      if (Equal(ntype, "constructor")) {
@@ -1111,6 +1119,15 @@ Allocate():
 	  }
 	}
       }
+    }
+    return SWIG_OK;
+  }
+
+  virtual int templateDeclaration(Node *n) {
+    String *ttype = Getattr(n, "templatetype");
+    if (Equal(ttype, "constructor")) {
+      // Templated constructors need to be taken account of even if not instantiated with %template
+      constructorDeclaration(n);
     }
     return SWIG_OK;
   }

@@ -2078,7 +2078,6 @@ int Language::classDirectorDisown(Node *n) {
  * ---------------------------------------------------------------------- */
 
 int Language::classDirectorConstructors(Node *n) {
-  Node *ni;
   String *nodeType;
   Node *parent = Swig_methodclass(n);
   int default_ctor = Getattr(parent, "allocate:default_constructor") ? 1 : 0;
@@ -2086,31 +2085,42 @@ int Language::classDirectorConstructors(Node *n) {
   int constructor = 0;
 
   /* emit constructors */
-  for (ni = Getattr(n, "firstChild"); ni; ni = nextSibling(ni)) {
+  List *constructors = NewList();
+  for (Node *ni = firstChild(n); ni; ni = nextSibling(ni)) {
     nodeType = Getattr(ni, "nodeType");
-    if (Cmp(nodeType, "constructor") == 0) {
-      if (GetFlag(ni, "feature:ignore"))
-        continue;
-
-      Parm *parms = Getattr(ni, "parms");
-      if (is_public(ni)) {
-	/* emit public constructor */
-	classDirectorConstructor(ni);
-	constructor = 1;
-	if (default_ctor)
-	  default_ctor = !ParmList_numrequired(parms);
-      } else {
-	/* emit protected constructor if needed */
-	if (need_nonpublic_ctor(ni)) {
-	  classDirectorConstructor(ni);
-	  constructor = 1;
-	  protected_ctor = 1;
-	  if (default_ctor)
-	    default_ctor = !ParmList_numrequired(parms);
-	}
+    if (Equal(nodeType, "constructor")) {
+      Append(constructors, ni);
+    } else if (Equal(nodeType, "using") && GetFlag(ni, "usingctor")) {
+      for (Node *ui = firstChild(ni); ui; ui = nextSibling(ui)) {
+	Append(constructors, ui);
       }
     }
   }
+  for (Iterator it = First(constructors); it.item; it = Next(it)) {
+    Node *ni = it.item;
+    if (GetFlag(ni, "feature:ignore"))
+      continue;
+
+    Parm *parms = Getattr(ni, "parms");
+    if (is_public(ni)) {
+      /* emit public constructor */
+      classDirectorConstructor(ni);
+      constructor = 1;
+      if (default_ctor)
+	default_ctor = !ParmList_numrequired(parms);
+    } else {
+      /* emit protected constructor if needed */
+      if (need_nonpublic_ctor(ni)) {
+	classDirectorConstructor(ni);
+	constructor = 1;
+	protected_ctor = 1;
+	if (default_ctor)
+	  default_ctor = !ParmList_numrequired(parms);
+      }
+    }
+  }
+  Delete(constructors);
+
   /* emit default constructor if needed */
   if (!constructor) {
     if (!default_ctor) {
@@ -2545,13 +2555,18 @@ int Language::constructorDeclaration(Node *n) {
       return SWIG_NOWRAP;
   }
 
-  /* Name adjustment for %rename */
+  // Name adjustment of constructor when a class has been renamed with %rename
   Swig_save("constructorDeclaration", n, "sym:name", NIL);
 
   {
     String *base = Swig_scopename_last(name);
-    if ((Strcmp(base, symname) == 0) && (Strcmp(symname, ClassPrefix) != 0)) {
-      Setattr(n, "sym:name", ClassPrefix);
+    // Note that it is possible for the constructor to have a different name to the class name in
+    // some target languages, where it is wrapped as a factory type function instead of a constructor.
+    if (Equal(base, symname) && !Equal(symname, ClassPrefix)) {
+      // Adjust name, except when the constructor's name comes from a templated constructor,
+      // where the name passed to %template is used instead.
+      if (!Getattr(n, "template"))
+	Setattr(n, "sym:name", ClassPrefix);
     }
     Delete(base);
   }

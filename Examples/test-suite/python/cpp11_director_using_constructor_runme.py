@@ -1,4 +1,4 @@
-from cpp11_using_constructor import *
+from cpp11_director_using_constructor import *
 
 
 # Public base constructors
@@ -113,5 +113,3 @@ TemplPublicDerived3Int().meth()
 TemplPublicDerived3Int(0, "hi").meth()
 TemplPublicDerived4Int().meth()
 TemplPublicDerived5Int().meth()
-TemplPublicDerived6Int(0, "hi").meth()
-TemplPublicDerived6Int().meth()
