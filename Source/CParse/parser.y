@@ -1652,7 +1652,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token <id> STRING WSTRING
 %token <loc> INCLUDE IMPORT INSERT
 %token <str> CHARCONST WCHARCONST
-%token <dtype> NUM_INT NUM_FLOAT NUM_UNSIGNED NUM_LONG NUM_ULONG NUM_LONGLONG NUM_ULONGLONG NUM_BOOL
+%token <dtype> NUM_INT NUM_DOUBLE NUM_FLOAT NUM_LONGDOUBLE NUM_UNSIGNED NUM_LONG NUM_ULONG NUM_LONGLONG NUM_ULONGLONG NUM_BOOL
 %token <intvalue> TYPEDEF
 %token <type> TYPE_INT TYPE_UNSIGNED TYPE_SHORT TYPE_LONG TYPE_FLOAT TYPE_DOUBLE TYPE_CHAR TYPE_WCHAR TYPE_VOID TYPE_SIGNED TYPE_BOOL TYPE_COMPLEX TYPE_TYPEDEF TYPE_RAW TYPE_NON_ISO_INT8 TYPE_NON_ISO_INT16 TYPE_NON_ISO_INT32 TYPE_NON_ISO_INT64
 %token LPAREN RPAREN COMMA SEMI EXTERN INIT LBRACE RBRACE PERIOD ELLIPSIS
@@ -1763,6 +1763,28 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <pl>       lambda_tail;
 %type <str>      virt_specifier_seq virt_specifier_seq_opt;
 %type <str>      class_virt_specifier_opt;
+
+%{
+
+/* C++ decltype/auto type deduction. */
+static SwigType *deduce_type(struct Define *dtype) {
+  if (!dtype->val) return NULL;
+  Node *n = Swig_symbol_clookup(dtype->val, 0);
+  if (n) {
+    return Getattr(n, "type");
+  } else if (dtype->type != T_AUTO && dtype->type != T_INT) {
+    /* Try to deduce the type from the T_* type code.
+     *
+     * Sadly we can't trust T_INT because several places in the parser set
+     * .type = T_INT when it may not be (or even definitely isn't).
+     */
+    return NewSwigType(dtype->type);
+  } else {
+    return NULL;
+  }
+}
+
+%}
 
 %%
 
@@ -2116,15 +2138,15 @@ echo_directive : ECHO HBLOCK {
    ------------------------------------------------------------ */
 
 except_directive : EXCEPT LPAREN identifier RPAREN LBRACE {
-                    skip_balanced('{','}');
-		    $$ = 0;
 		    Swig_warning(WARN_DEPRECATED_EXCEPT,cparse_file, cparse_line, "%%except is deprecated.  Use %%exception instead.\n");
+		    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
+		    $$ = 0;
 	       }
 
                | EXCEPT LBRACE {
-                    skip_balanced('{','}');
-		    $$ = 0;
 		    Swig_warning(WARN_DEPRECATED_EXCEPT,cparse_file, cparse_line, "%%except is deprecated.  Use %%exception instead.\n");
+		    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
+		    $$ = 0;
                }
 
                | EXCEPT LPAREN identifier RPAREN SEMI {
@@ -2175,7 +2197,7 @@ fragment_directive: FRAGMENT LPAREN fname COMMA kwargs RPAREN HBLOCK {
                  | FRAGMENT LPAREN fname COMMA kwargs RPAREN LBRACE {
 		   Hash *p = $5;
 		   String *code;
-                   skip_balanced('{','}');
+		   if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		   $$ = new_node("fragment");
 		   Setattr($$,"value",Getattr($3,"value"));
 		   Setattr($$,"type",Getattr($3,"type"));
@@ -2286,10 +2308,11 @@ inline_directive : INLINE HBLOCK {
                | INLINE LBRACE {
                  String *cpps;
 		 int start_line = cparse_line;
-		 skip_balanced('{','}');
 		 if (Namespaceprefix) {
 		   Swig_error(cparse_file, cparse_start_line, "%%inline directive inside a namespace is disallowed.\n");
-		   
+		 }
+		 if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
+		 if (Namespaceprefix) {
 		   $$ = 0;
 		 } else {
 		   String *code;
@@ -2335,7 +2358,7 @@ insert_directive : HBLOCK {
                }
                | INSERT LPAREN idstring RPAREN LBRACE {
 		 String *code;
-                 skip_balanced('{','}');
+		 if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		 $$ = new_node("insert");
 		 Setattr($$,"section",$3);
 		 Delitem(scanner_ccode,0);
@@ -3336,8 +3359,24 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
             * to wrap.
             */
 	   | storage_class AUTO declarator cpp_const LBRACE {
-	      skip_balanced('{','}');
 	      Swig_warning(WARN_CPP14_AUTO, cparse_file, cparse_line, "Unable to deduce return type for '%s'.\n", $3.id);
+	      if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
+	   }
+	   /* C++11 auto variable declaration. */
+	   | storage_class AUTO idcolon EQUAL definetype SEMI {
+	      SwigType *type = deduce_type(&$5);
+	      if (!type) {
+		Swig_warning(WARN_CPP11_AUTO, cparse_file, cparse_line, "Unable to deduce type for variable '%s'.\n", $3);
+		$$ = 0;
+	      } else {
+		$$ = new_node("cdecl");
+		Setattr($$, "type", type);
+		Setattr($$, "storage", $1);
+		Setattr($$, "name", $3);
+		Setattr($$, "decl", NewStringEmpty());
+		Setattr($$, "value", $5.val);
+		Setattr($$, "valuetype", type);
+	      }
 	   }
 	   ;
 
@@ -3373,7 +3412,7 @@ c_decl_tail    : SEMI {
 		 }
 	       }
                | LBRACE { 
-                   skip_balanced('{','}');
+                   if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
                    $$ = 0;
                }
                | error {
@@ -3436,20 +3475,20 @@ cpp_lambda_decl : storage_class AUTO idcolon EQUAL lambda_introducer lambda_temp
                 ;
 
 lambda_introducer : LBRACKET {
-		  skip_balanced('[',']');
+		  if (skip_balanced('[',']') < 0) Exit(EXIT_FAILURE);
 		  $$ = 0;
 	        }
 		;
 
 lambda_template : LESSTHAN {
-		  skip_balanced('<','>');
+		  if (skip_balanced('<','>') < 0) Exit(EXIT_FAILURE);
 		  $$ = 0;
 		}
 		| empty { $$ = 0; }
 		;
 
 lambda_body : LBRACE {
-		  skip_balanced('{','}');
+		  if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		  $$ = 0;
 		}
 
@@ -3457,7 +3496,7 @@ lambda_tail :	SEMI {
 		  $$ = 0;
 		}
 		| LPAREN {
-		  skip_balanced('(',')');
+		  if (skip_balanced('(',')') < 0) Exit(EXIT_FAILURE);
 		} SEMI {
 		  $$ = 0;
 		}
@@ -4903,7 +4942,7 @@ cpp_conversion_operator : storage_class CONVERSIONOPERATOR type pointer LPAREN p
 /* isolated catch clause. */
 
 cpp_catch_decl : CATCH LPAREN parms RPAREN LBRACE {
-                 skip_balanced('{','}');
+                 if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
                  $$ = 0;
                }
                ;
@@ -4911,7 +4950,7 @@ cpp_catch_decl : CATCH LPAREN parms RPAREN LBRACE {
 /* static_assert(bool, const char*); (C++11)
  * static_assert(bool); (C++17) */
 cpp_static_assert : STATIC_ASSERT LPAREN {
-                skip_balanced('(',')');
+                if (skip_balanced('(',')') < 0) Exit(EXIT_FAILURE);
                 $$ = 0;
               }
               ;
@@ -4983,7 +5022,7 @@ cpp_end        : cpp_const SEMI {
 		    $$.final = $1.final;
                }
                | cpp_const LBRACE { 
-		    skip_balanced('{','}'); 
+		    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		    $$.val = 0;
 		    $$.qualifier = $1.qualifier;
 		    $$.refqualifier = $1.refqualifier;
@@ -5018,7 +5057,7 @@ cpp_vend       : cpp_const SEMI {
                      $$.final = $1.final;
                }
                | cpp_const LBRACE { 
-                     skip_balanced('{','}');
+                     if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
                      $$.val = 0;
                      $$.qualifier = $1.qualifier;
                      $$.refqualifier = $1.refqualifier;
@@ -5313,10 +5352,10 @@ def_args       : EQUAL definetype {
 		  }		  
                }
                | EQUAL LBRACE {
-		 skip_balanced('{','}');
+		 if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		 $$.val = NewString(scanner_ccode);
 		 $$.rawval = 0;
-                 $$.type = T_INT;
+                 $$.type = T_INT; /* This may be a lie. */
 		 $$.bitfield = 0;
 		 $$.throws = 0;
 		 $$.throwf = 0;
@@ -5336,7 +5375,7 @@ def_args       : EQUAL definetype {
                | empty {
                  $$.val = 0;
                  $$.rawval = 0;
-                 $$.type = T_INT;
+                 $$.type = T_INT; /* This is a lie. */
 		 $$.bitfield = 0;
 		 $$.throws = 0;
 		 $$.throwf = 0;
@@ -6238,35 +6277,32 @@ type_right     : primitive_type { $$ = $1;
 decltype       : DECLTYPE LPAREN {
 		 $<str>$ = get_raw_text_balanced('(', ')');
 	       } decltypeexpr {
+		 String *expr = $<str>3;
 		 if ($4) {
 		   $$ = $4;
-		   Delete($<str>3);
 		 } else {
-		   String *expr = $<str>3;
-		   Delitem(expr,0);
-		   Delitem(expr,DOH_END);
+		   $$ = NewStringf("decltype%s", expr);
+		   /* expr includes parentheses but don't include them in the warning message. */
+		   Delitem(expr, 0);
+		   Delitem(expr, DOH_END);
 		   Swig_warning(WARN_CPP11_DECLTYPE, cparse_file, cparse_line, "Unable to deduce decltype for '%s'.\n", expr);
-		   $$ = expr;
 		 }
+		 Delete(expr);
 	       }
 	       ;
 
 decltypeexpr   : expr RPAREN {
-		 Node *n = Swig_symbol_clookup($1.val, 0);
-		 if (n) {
-		   $$ = Getattr(n, "type");
-		 } else if (Equal($1.val, "true") || Equal($1.val, "false")) {
-		   $$ = NewString("bool");
-		 } else {
-		   Swig_warning(WARN_CPP11_DECLTYPE, cparse_file, cparse_line, "Unable to deduce decltype for '%s'.\n", $1.val);
-
-		   $$ = NewStringf("decltype(%s)", $1.val);
-		 }
+		 $$ = deduce_type(&$1);
 	       }
 	       | error RPAREN {
-		 // Avoid a parse error if we can't parse the expression decltype() is applied to.
+		 /* Avoid a parse error if we can't parse the expression
+		  * decltype() is applied to.
+		  *
+		  * Set $$ to 0 here to trigger the decltype rule above to
+		  * issue a warning.
+		  */
 		 $$ = 0;
-		 skip_balanced('(',')');
+		 if (skip_balanced('(',')') < 0) Exit(EXIT_FAILURE);
 		 Clear(scanner_ccode);
 	       }
 	       ;
@@ -6597,7 +6633,7 @@ expr           : valexpr { $$ = $1; }
                | type {
 		 Node *n;
 		 $$.val = $1;
-		 $$.type = T_INT;
+		 $$.type = T_INT; /* This may be a lie. */
 		 /* Check if value is in scope */
 		 n = Swig_symbol_clookup($1,0);
 		 if (n) {
@@ -6804,7 +6840,9 @@ valexpr        : exprsimple { $$ = $1; }
 	       ;
 
 exprnum        :  NUM_INT { $$ = $1; }
+               |  NUM_DOUBLE { $$ = $1; }
                |  NUM_FLOAT { $$ = $1; }
+               |  NUM_LONGDOUBLE { $$ = $1; }
                |  NUM_UNSIGNED { $$ = $1; }
                |  NUM_LONG { $$ = $1; }
                |  NUM_ULONG { $$ = $1; }
@@ -6928,7 +6966,7 @@ exprcompound   : expr PLUS expr {
 	       }
                | type LPAREN {
 		 String *qty;
-                 skip_balanced('(',')');
+		 if (skip_balanced('(',')') < 0) Exit(EXIT_FAILURE);
 		 qty = Swig_symbol_type_qualify($1,0);
 		 if (SwigType_istemplate(qty)) {
 		   String *nstr = SwigType_namestr(qty);
@@ -7192,15 +7230,15 @@ ctor_end       : cpp_const ctor_initializer SEMI {
                       Swig_error(cparse_file, cparse_line, "Constructor cannot have a qualifier.\n");
                }
                | cpp_const ctor_initializer LBRACE { 
-                    skip_balanced('{','}'); 
+                    if ($1.qualifier)
+                      Swig_error(cparse_file, cparse_line, "Constructor cannot have a qualifier.\n");
+                    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
                     $$.have_parms = 0; 
                     $$.defarg = 0; 
                     $$.throws = $1.throws;
                     $$.throwf = $1.throwf;
                     $$.nexcept = $1.nexcept;
                     $$.final = $1.final;
-                    if ($1.qualifier)
-                      Swig_error(cparse_file, cparse_line, "Constructor cannot have a qualifier.\n");
                }
                | LPAREN parms RPAREN SEMI { 
                     Clear(scanner_ccode); 
@@ -7213,7 +7251,7 @@ ctor_end       : cpp_const ctor_initializer SEMI {
 		    $$.final = 0;
                }
                | LPAREN parms RPAREN LBRACE {
-                    skip_balanced('{','}'); 
+                    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
                     $$.parms = $2; 
                     $$.have_parms = 1; 
                     $$.defarg = 0; 
@@ -7253,7 +7291,7 @@ mem_initializer_list : mem_initializer
                ;
 
 mem_initializer : idcolon LPAREN {
-		  skip_balanced('(',')');
+		  if (skip_balanced('(',')') < 0) Exit(EXIT_FAILURE);
 		  Clear(scanner_ccode);
 		}
                 /* Uniform initialization in C++11.
@@ -7265,7 +7303,7 @@ mem_initializer : idcolon LPAREN {
                    };
                 */
                 | idcolon LBRACE {
-		  skip_balanced('{','}');
+		  if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		  Clear(scanner_ccode);
 		}
                 ;
@@ -7416,7 +7454,7 @@ stringbrace    : string {
 		 $$ = $1;
                }
                | LBRACE {
-                  skip_balanced('{','}');
+		  if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		  $$ = NewString(scanner_ccode);
                }
               | HBLOCK {

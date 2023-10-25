@@ -7,6 +7,46 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-05-25: olly
+	    SWIG now discriminates between long double, double and float
+	    constants.  For example, this means that for target languages which
+	    support a separate float type (such as C# and D) this will now
+	    create a float constant instead of a double constant in the target
+	    language:
+
+	    #define PI_ISH 3.1414f
+
+2023-05-25: olly
+	    C++11 `auto` variables and `decltype()` can now deduce the
+	    type of some expressions which involve literals of built-in types.
+	    Currently int is not supported due to the parser misusing T_INT
+	    for situations where the type isn't actually known.
+
+2023-05-25: olly
+	    #1125 Support parsing C++11 auto variables.  This uses the
+	    existing type deduction code from decltype so has the same
+	    limitations, and such variables will only actually be wrapped
+	    when SWIG can deduce the type.
+
+2023-05-23: olly
+	    [Ruby] Fix deprecation warnings about ANYARGS when compiling
+	    C++ code for SWIG-generated Ruby wrappers with Ruby 3.x.
+
+	    This is a recurrence of a problem fixed in 4.0.2.  Our fix was
+	    conditional on RB_METHOD_DEFINITION_DECL being defined, but Ruby
+	    3.0 stopped defining this.
+
+2023-05-23: olly
+	    #2606 Improve error output when SWIG reaches EOF while looking for
+	    a closing delimiter.  This is reported with an error like:
+
+	    Error: Missing '}'. Reached end of input.
+
+	    We now exit after reporting this and so no longer report a second
+	    more generic error like:
+
+	    Error: Syntax error in input(1).
+
 2023-05-22: mmomtchev
 	    [Javascript] #2600 Improve test coverage by adding _runme.js files
 	    for 22 test cases.

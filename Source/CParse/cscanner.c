@@ -163,15 +163,17 @@ void start_inline(char *text, int line) {
  *
  * Skips a piece of code enclosed in begin/end symbols such as '{...}' or
  * (...).  Ignores symbols inside comments or strings.
+ *
+ * Returns 0 if successfully skipped, -1 if EOF found first.
  * ----------------------------------------------------------------------------- */
 
-void skip_balanced(int startchar, int endchar) {
+int skip_balanced(int startchar, int endchar) {
   int start_line = Scanner_line(scan);
   Clear(scanner_ccode);
 
   if (Scanner_skip_balanced(scan,startchar,endchar) < 0) {
     Swig_error(cparse_file, start_line, "Missing '%c'. Reached end of input.\n", endchar);
-    return;
+    return -1;
   }
 
   cparse_line = Scanner_line(scan);
@@ -180,7 +182,7 @@ void skip_balanced(int startchar, int endchar) {
   Append(scanner_ccode, Scanner_text(scan));
   if (endchar == '}')
     num_brace--;
-  return;
+  return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -419,9 +421,14 @@ static int yylook(void) {
       return NUM_ULONGLONG;
       
     case SWIG_TOKEN_DOUBLE:
+      return NUM_DOUBLE;
+
     case SWIG_TOKEN_FLOAT:
       return NUM_FLOAT;
       
+    case SWIG_TOKEN_LONGDOUBLE:
+      return NUM_LONGDOUBLE;
+
     case SWIG_TOKEN_BOOL:
       return NUM_BOOL;
       
@@ -620,29 +627,35 @@ int yylex(void) {
   switch (l) {
 
   case NUM_INT:
+    yylval.dtype.type = T_INT;
+    goto num_common;
+  case NUM_DOUBLE:
+    yylval.dtype.type = T_DOUBLE;
+    goto num_common;
   case NUM_FLOAT:
+    yylval.dtype.type = T_FLOAT;
+    goto num_common;
+  case NUM_LONGDOUBLE:
+    yylval.dtype.type = T_LONGDOUBLE;
+    goto num_common;
   case NUM_ULONG:
+    yylval.dtype.type = T_ULONG;
+    goto num_common;
   case NUM_LONG:
+    yylval.dtype.type = T_LONG;
+    goto num_common;
   case NUM_UNSIGNED:
+    yylval.dtype.type = T_UINT;
+    goto num_common;
   case NUM_LONGLONG:
+    yylval.dtype.type = T_LONGLONG;
+    goto num_common;
   case NUM_ULONGLONG:
+    yylval.dtype.type = T_ULONGLONG;
+    goto num_common;
   case NUM_BOOL:
-    if (l == NUM_INT)
-      yylval.dtype.type = T_INT;
-    if (l == NUM_FLOAT)
-      yylval.dtype.type = T_DOUBLE;
-    if (l == NUM_ULONG)
-      yylval.dtype.type = T_ULONG;
-    if (l == NUM_LONG)
-      yylval.dtype.type = T_LONG;
-    if (l == NUM_UNSIGNED)
-      yylval.dtype.type = T_UINT;
-    if (l == NUM_LONGLONG)
-      yylval.dtype.type = T_LONGLONG;
-    if (l == NUM_ULONGLONG)
-      yylval.dtype.type = T_ULONGLONG;
-    if (l == NUM_BOOL)
-      yylval.dtype.type = T_BOOL;
+    yylval.dtype.type = T_BOOL;
+num_common:
     yylval.dtype.val = NewString(Scanner_text(scan));
     yylval.dtype.bitfield = 0;
     yylval.dtype.throws = 0;
