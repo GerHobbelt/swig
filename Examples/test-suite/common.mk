@@ -150,6 +150,7 @@ CPP_TEST_CASES += \
 	constant_pointers \
 	constover \
 	constructor_copy \
+	constructor_copy_non_const \
 	constructor_exception \
 	constructor_explicit \
 	constructor_ignore \
@@ -160,6 +161,7 @@ CPP_TEST_CASES += \
 	conversion_namespace \
 	conversion_ns_template \
 	conversion_operators \
+	copyctor \
 	cplusplus_throw \
 	cpp_basic \
 	cpp_enum \
