@@ -7,12 +7,16 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
-2023-06-06: olly
-	    #2228 Improve support for template parameters with expressions
-	    containing `&&` or `and`.  Previously these resulted in a parse
-	    error in some cases.  Fixing the grammar seems hard (there's an
-	    ambiguity with rvalue references) so we now use an error recovery
-	    trick to allow parsing these cases.
+2023-06-07: olly
+	    #2630 Fix preprocessor handling of a slash immediately followed by
+	    a single quote, which wasn't getting recognised as starting a
+	    character literal.
+
+2023-06-07: olly
+	    #2630 Fix parsing of <= and >= in templated lambda.
+
+	    Skipping between matching delimiters is now done at the token level
+	    rather than the character level.
 
 2023-06-02: mmomtchev
 	    [Javascript] #2622 Fix support for %typemap(default) and improve

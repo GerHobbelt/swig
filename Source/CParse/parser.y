@@ -8,10 +8,12 @@
  *
  * parser.y
  *
- * YACC parser for SWIG.   The grammar is a somewhat broken subset of C/C++.
+ * Bison parser for SWIG.   The grammar is a somewhat broken subset of C/C++.
  * This file is a bit of a mess and probably needs to be rewritten at
  * some point.  Beware.
  * ----------------------------------------------------------------------------- */
+
+%require "3.0"
 
 /* There are a small number of known shift-reduce conflicts in this file, fail
    compilation if any more are introduced.
@@ -1740,7 +1742,6 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <dtype>    expr exprnum exprsimple exprcompound valexpr exprmem callparms callptail;
 %type <id>       ename ;
 %type <id>       less_valparms_greater;
-%type <p>        less_valparms_greater_parms;
 %type <str>      type_qualifier;
 %type <str>      ref_qualifier;
 %type <id>       type_qualifier_raw;
@@ -1849,7 +1850,7 @@ interface      : interface declaration {
                    }
                    $$ = $1;
                }
-               | empty {
+               | %empty {
                    $$ = new_node("top");
                }
                ;
@@ -2489,7 +2490,7 @@ pragma_arg    : string { $$ = $1; }
               ;
 
 pragma_lang   : LPAREN identifier RPAREN { $$ = $2; }
-              | empty { $$ = (char *) "swig"; }
+              | %empty { $$ = (char *) "swig"; }
               ;
 
 /* ------------------------------------------------------------
@@ -2843,7 +2844,7 @@ tm_tail        : COMMA typemap_parm tm_tail {
                  $$ = $2;
 		 set_nextSibling($$,$3);
                 }
-               | empty { $$ = 0;}
+               | %empty { $$ = 0;}
                ;
 
 typemap_parm   : type plain_declarator {
@@ -3481,7 +3482,7 @@ lambda_template : LESSTHAN {
 		  if (skip_balanced('<','>') < 0) Exit(EXIT_FAILURE);
 		  $$ = 0;
 		}
-		| empty { $$ = 0; }
+		| %empty { $$ = 0; }
 		;
 
 lambda_body : LBRACE {
@@ -3523,7 +3524,7 @@ c_enum_key : ENUM {
 c_enum_inherit : COLON type_right {
                    $$ = $2;
               }
-              | empty { $$ = 0; }
+              | %empty { $$ = 0; }
               ;
 /* ------------------------------------------------------------
    enum [class] Name;
@@ -4428,7 +4429,7 @@ template_parms : templateparameter templateparameterstail {
                       set_nextSibling($1,$2);
                       $$ = $1;
                    }
-                   | empty { $$ = 0; }
+                   | %empty { $$ = 0; }
                    ;
 
 templateparameter : templcpptype def_args {
@@ -4480,7 +4481,7 @@ templateparameterstail : COMMA templateparameter templateparameterstail {
                          set_nextSibling($2,$3);
                          $$ = $2;
                        }
-                       | empty { $$ = 0; }
+                       | %empty { $$ = 0; }
                        ;
 
 /* Namespace support */
@@ -4678,7 +4679,7 @@ cpp_members  : cpp_member cpp_members {
 	       set_nextSibling($$,$7);
 	     }
              | include_directive { $$ = $1; }
-             | empty { $$ = 0;}
+             | %empty { $$ = 0;}
 	     | error {
 	       Swig_error(cparse_file,cparse_line,"Syntax error in input(3).\n");
 	       Exit(EXIT_FAILURE);
@@ -5140,7 +5141,7 @@ storage_class  : storage_class_list {
 		   $$ = r;
 		 }
 	       }
-	       | empty { $$ = 0; }
+	       | %empty { $$ = 0; }
 	       ;
 
 storage_class_list: storage_class_raw { $$ = $1; }
@@ -5220,7 +5221,7 @@ rawparms	: parm {
 		  set_comment($1, $3);
 		  $$ = $1;
 		}
-		| empty {
+		| %empty {
 		  $$ = 0;
 		}
 		;
@@ -5268,14 +5269,14 @@ rawvalparms     : valparm valptail {
                   set_nextSibling($1,$2);
                   $$ = $1;
 		}
-               | empty { $$ = 0; }
+               | %empty { $$ = 0; }
                ;
 
 valptail       : COMMA valparm valptail {
                  set_nextSibling($2,$3);
 		 $$ = $2;
                 }
-               | empty { $$ = 0; }
+               | %empty { $$ = 0; }
                ;
 
 
@@ -5319,14 +5320,14 @@ callparms      : valexpr callptail {
 		 $$ = $1;
 		 Printf($$.val, "%s", $2.val);
 	       }
-	       | empty { $$.val = NewStringEmpty(); }
+	       | %empty { $$.val = NewStringEmpty(); }
 	       ;
 
 callptail      : COMMA valexpr callptail {
 		 $$.val = NewStringf(",%s%s", $2.val, $3.val);
 		 $$.type = 0;
 	       }
-	       | empty { $$.val = NewStringEmpty(); }
+	       | %empty { $$.val = NewStringEmpty(); }
 	       ;
 
 def_args       : EQUAL definetype { 
@@ -5379,7 +5380,7 @@ def_args       : EQUAL definetype {
 		 $$.nexcept = 0;
 		 $$.final = 0;
 	       }
-               | empty {
+               | %empty {
                  $$.val = 0;
                  $$.rawval = 0;
                  $$.type = T_INT; /* This is a lie. */
@@ -5483,7 +5484,7 @@ plain_declarator : declarator {
 		$$.type = t;
 	      }
 	    }
-            | empty {
+            | %empty {
    	      $$.type = 0;
               $$.id = 0;
 	      $$.parms = 0;
@@ -6516,7 +6517,7 @@ explicit_default : DEFAULT {
 /* Some stuff for handling enums */
 
 ename          :  identifier { $$ = $1; }
-	       |  empty { $$ = (char *) 0;}
+	       |  %empty { $$ = (char *) 0;}
 	       ;
 
 constant_directives : constant_directive
@@ -6525,7 +6526,7 @@ constant_directives : constant_directive
 
 optional_ignored_defines
 		: constant_directives
-		| empty
+		| %empty
 		;
 
 /* Enum lists - any #define macros (constant directives) within the enum list are ignored. Trailing commas accepted. */
@@ -6990,7 +6991,7 @@ exprcompound   : expr PLUS expr {
 variadic_opt  : ELLIPSIS {
 	        $$ = NewString("...");
 	      }
-	      | empty {
+	      | %empty {
 	        $$ = 0;
 	      }
 	      ;
@@ -7001,7 +7002,7 @@ inherit        : raw_inherit {
                ;
 
 raw_inherit     : COLON { inherit_list = 1; } base_list { $$ = $3; inherit_list = 0; }
-                | empty { $$ = 0; }
+                | %empty { $$ = 0; }
                 ;
 
 base_list      : base_specifier {
@@ -7115,13 +7116,13 @@ classkey       : CLASS {
 classkeyopt    : classkey {
 		   $$ = $1;
                }
-               | empty {
+               | %empty {
 		   $$ = 0;
                }
                ;
 
 opt_virtual    : VIRTUAL
-               | empty
+               | %empty
                ;
 
 virt_specifier_seq : OVERRIDE {
@@ -7141,7 +7142,7 @@ virt_specifier_seq : OVERRIDE {
 virt_specifier_seq_opt : virt_specifier_seq {
                    $$ = $1;
                }
-               | empty {
+               | %empty {
                    $$ = 0;
                }
                ;
@@ -7149,7 +7150,7 @@ virt_specifier_seq_opt : virt_specifier_seq {
 class_virt_specifier_opt : FINAL {
                    $$ = NewString("1");
                }
-               | empty {
+               | %empty {
                    $$ = 0;
                }
                ;
@@ -7215,7 +7216,7 @@ qualifiers_exception_specification : cv_ref_qualifier {
 cpp_const      : qualifiers_exception_specification {
                     $$ = $1;
                }
-               | empty { 
+               | %empty {
                     $$.throws = 0;
                     $$.throwf = 0;
                     $$.nexcept = 0;
@@ -7288,7 +7289,7 @@ ctor_end       : cpp_const ctor_initializer SEMI {
                ;
 
 ctor_initializer : COLON mem_initializer_list
-               | empty
+               | %empty
                ;
 
 mem_initializer_list : mem_initializer
@@ -7315,48 +7316,12 @@ mem_initializer : idcolon LPAREN {
 		}
                 ;
 
-less_valparms_greater : LESSTHAN {
-		  /* Grab text between balanced < and > which we'll need for
-		   * handling cases involving && which we can't actually parse.
-		   * Don't flag unbalanced < and > errors here since > and <
-		   * may occur as operators in expressions within the valparms.
-		   */
-		  $<str>$ = get_raw_text_balanced('<', '>');
-		} less_valparms_greater_parms {
-		  String *s = NewStringEmpty();
-		  if ($3) {
-		    SwigType_add_template(s, $3);
-		  } else {
-		    /* We fail to parse some template expressions containing &&
-		     * and it's hard to fix the grammar properly without
-		     * introducing more conflicts, so we handle this case via
-		     * error recovery instead.
-		     */
-		    String *valparms = $<str>2;
-		    /* Remove the < and > delimiters. */
-		    Delitem(valparms, 0);
-		    Delitem(valparms, DOH_END);
-		    Parm *p = NewParmWithoutFileLineInfo(0, 0);
-		    Setfile(p, cparse_file);
-		    Setline(p, cparse_line);
-		    Setattr(p, "value", valparms);
-		    SwigType_add_template(s, p);
-		  }
-		  $$ = Char(s);
-		  scanner_last_id(1);
-		  Delete($<str>2);
-		}
-		;
-
-less_valparms_greater_parms
-		: valparms GREATERTHAN { $$ = $1; }
-		| error GREATERTHAN {
-		  $$ = 0;
-		}
-		| error END {
-		  Swig_error(cparse_file, cparse_line, "Missing '>'. Reached end of input.\n");
-		  Exit(EXIT_FAILURE);
-		}
+less_valparms_greater : LESSTHAN valparms GREATERTHAN {
+                     String *s = NewStringEmpty();
+                     SwigType_add_template(s,$2);
+                     $$ = Char(s);
+		     scanner_last_id(1);
+                }
 		;
 
 /* Identifiers including the C++11 identifiers with special meaning */
@@ -7371,7 +7336,7 @@ idstring       : identifier { $$ = $1; }
                ;
 
 idstringopt    : idstring { $$ = $1; }
-               | empty { $$ = 0; }
+               | %empty { $$ = 0; }
                ;
 
 idcolon        : idtemplate idcolontail { 
@@ -7518,7 +7483,7 @@ options        : LPAREN kwargs RPAREN {
 		     n = nextSibling(n);
 		  }
                }   
-               | empty { $$ = 0; };
+               | %empty { $$ = 0; };
 
  
 /* Keyword arguments */
@@ -7560,8 +7525,6 @@ stringnum      : string {
                  $$ = Char($1.val);
                }
                ;
-
-empty          :   ;
 
 %%
 
