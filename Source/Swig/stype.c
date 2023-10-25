@@ -550,7 +550,7 @@ String *SwigType_str(const SwigType *s, const_String_or_char_ptr id) {
   int nelements, i;
 
   if (id) {
-    /* stringify the id expanding templates, for example when the id is a fully qualified templated class name */
+    /* Stringify the id expanding templates, for example when the id is a fully qualified class template name */
     String *id_str = NewString(id); /* unfortunate copy due to current const limitations */
     result = SwigType_str(id_str, 0);
     Delete(id_str);
@@ -1275,6 +1275,11 @@ String *SwigType_manglestr(const SwigType *s) {
  * SwigType_typename_replace()
  *
  * Replaces a typename in a type with something else.  Needed for templates.
+ * Collapses duplicate const into a single const.
+ * Reference collapsing probably should be implemented here.
+ * Example:
+ *   t=r.q(const).T pat=T rep=int           =>  r.q(const).int
+ *   t=r.q(const).T pat=T rep=q(const).int  =>  r.q(const).int  (duplicate const removed)
  * ----------------------------------------------------------------------------- */
 
 void SwigType_typename_replace(SwigType *t, String *pat, String *rep) {
@@ -1297,7 +1302,15 @@ void SwigType_typename_replace(SwigType *t, String *pat, String *rep) {
     if (SwigType_issimple(e)) {
       if (Equal(e, pat)) {
 	/* Replaces a type of the form 'pat' with 'rep<args>' */
-	Replace(e, pat, rep, DOH_REPLACE_ANY);
+	if (SwigType_isconst(rep) && i > 0 && SwigType_isconst(Getitem(elem, i - 1))) {
+	  /* Collapse duplicate const into a single const */
+	  SwigType *rep_without_const = Copy(rep);
+	  Delete(SwigType_pop(rep_without_const));
+	  Replace(e, pat, rep_without_const, DOH_REPLACE_ANY);
+	  Delete(rep_without_const);
+	} else {
+	  Replace(e, pat, rep, DOH_REPLACE_ANY);
+	}
       } else if (SwigType_istemplate(e)) {
 	/* Replaces a type of the form 'pat<args>' with 'rep' */
 	{

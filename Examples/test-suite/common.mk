@@ -225,6 +225,7 @@ CPP_TEST_CASES += \
 	director_wombat \
 	disown \
 	duplicate_class_name_in_ns \
+	duplicate_parm_names \
 	dynamic_cast \
 	empty \
 	enum_ignore \
@@ -487,6 +488,7 @@ CPP_TEST_CASES += \
 	template_parameters_global_scope \
 	template_partial_arg \
 	template_partial_specialization \
+	template_partial_specialization_more \
 	template_partial_specialization_typedef \
 	template_qualifier \
 	template_ref_type \
@@ -499,6 +501,7 @@ CPP_TEST_CASES += \
 	template_tbase_template \
 	template_template_parameters \
 	template_template_template_parameters \
+	template_type_collapse \
 	template_typedef \
 	template_typedef_class_template \
 	template_typedef_cplx \
