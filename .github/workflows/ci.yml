@@ -220,9 +220,10 @@ jobs:
           CPPSTD: c++11
         - SWIGLANG: r
           CPPSTD: c++11
-          VER: '3.3'
         - SWIGLANG: ruby
           CPPSTD: c++11
+          VER: '3.3'
+          continue-on-error: true # ruby-3.3 is in dev at the time of writing and asserting
         - SWIGLANG: ruby
           CPPSTD: c++11
         - SWIGLANG: scilab

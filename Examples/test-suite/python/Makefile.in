@@ -79,6 +79,7 @@ CPP_TEST_CASES += \
 	python_richcompare \
 	python_strict_unicode \
 	python_threads \
+	python_typemap_macro \
 	simutry \
 	std_containers \
 	swigobject \
@@ -97,6 +98,9 @@ CPP11_TEST_CASES = \
 	cpp11_std_unordered_multimap \
 	cpp11_std_unordered_multiset \
 	cpp11_std_unordered_set \
+
+CPP17_TEST_CASES = \
+	cpp17_std_filesystem
 
 C_TEST_CASES += \
 	ccomplextest \

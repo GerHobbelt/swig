@@ -1,35 +1,35 @@
 /* -----------------------------------------------------------------------------
- * std_set.i
+ * std_unordered_set.i
  *
- * SWIG typemaps for std::set<T>.
+ * SWIG typemaps for std::unordered_set<T>.
  *
  * Note that ISet<> used here requires .NET 4 or later.
  *
- * The C# wrapper implements ISet<> interface and shares performance
- * characteristics of C# System.Collections.Generic.SortedSet<> class, but
+ * The C# wrapper implements ISet<> interface and is similar in
+ * characteristics to the C# System.Collections.Generic.HashSet<> class, but
  * doesn't provide quite all of its methods.
  * ----------------------------------------------------------------------------- */
 
 %{
-#include <set>
+#include <unordered_set>
 #include <algorithm>
 #include <stdexcept>
 %}
 
-%csmethodmodifiers std::set::empty "private"
-%csmethodmodifiers std::set::size "private"
-%csmethodmodifiers std::set::getitem "private"
-%csmethodmodifiers std::set::create_iterator_begin "private"
-%csmethodmodifiers std::set::get_next "private"
-%csmethodmodifiers std::set::destroy_iterator "private"
+%csmethodmodifiers std::unordered_set::empty "private"
+%csmethodmodifiers std::unordered_set::size "private"
+%csmethodmodifiers std::unordered_set::getitem "private"
+%csmethodmodifiers std::unordered_set::create_iterator_begin "private"
+%csmethodmodifiers std::unordered_set::get_next "private"
+%csmethodmodifiers std::unordered_set::destroy_iterator "private"
 
 namespace std {
 
 // TODO: Add support for comparator and allocator template parameters.
 template <class T>
-class set {
+class unordered_set {
 
-%typemap(csinterfaces) std::set<T> "global::System.IDisposable, global::System.Collections.Generic.ISet<$typemap(cstype, T)>\n"
+%typemap(csinterfaces) std::unordered_set<T> "global::System.IDisposable, global::System.Collections.Generic.ISet<$typemap(cstype, T)>\n"
 %proxycode %{
   void global::System.Collections.Generic.ICollection<$typemap(cstype, T)>.Add($typemap(cstype, T) item) {
       ((global::System.Collections.Generic.ISet<$typemap(cstype, T)>)this).Add(item);
@@ -268,8 +268,8 @@ class set {
     typedef value_type& reference;
     typedef const value_type& const_reference;
 
-    set();
-    set(const set& other);
+    unordered_set();
+    unordered_set(const unordered_set& other);
     size_type size() const;
     bool empty() const;
     %rename(Clear) clear;
@@ -288,7 +288,7 @@ class set {
       }
 
       const value_type& getitem(const value_type& item) throw (std::out_of_range) {
-        std::set<T>::iterator iter = $self->find(item);
+        std::unordered_set<T>::iterator iter = $self->find(item);
         if (iter == $self->end())
           throw std::out_of_range("item not found");
 
@@ -296,21 +296,21 @@ class set {
       }
 
       // create_iterator_begin(), get_next() and destroy_iterator work together to provide a collection of items to C#
-      %apply void *VOID_INT_PTR { std::set<T>::iterator *create_iterator_begin }
-      %apply void *VOID_INT_PTR { std::set<T>::iterator *swigiterator }
+      %apply void *VOID_INT_PTR { std::unordered_set<T>::iterator *create_iterator_begin }
+      %apply void *VOID_INT_PTR { std::unordered_set<T>::iterator *swigiterator }
 
-      std::set<T>::iterator *create_iterator_begin() {
-        return new std::set<T>::iterator($self->begin());
+      std::unordered_set<T>::iterator *create_iterator_begin() {
+        return new std::unordered_set<T>::iterator($self->begin());
       }
 
-      const key_type& get_next(std::set<T>::iterator *swigiterator) {
+      const key_type& get_next(std::unordered_set<T>::iterator *swigiterator) {
         (void)$self;
-        std::set<T>::iterator iter = *swigiterator;
+        std::unordered_set<T>::iterator iter = *swigiterator;
         (*swigiterator)++;
         return *iter;
       }
 
-      void destroy_iterator(std::set<T>::iterator *swigiterator) {
+      void destroy_iterator(std::unordered_set<T>::iterator *swigiterator) {
         (void)$self;
         delete swigiterator;
       }

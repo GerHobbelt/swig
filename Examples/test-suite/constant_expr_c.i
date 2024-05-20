@@ -2,6 +2,8 @@
 /* Tests of constant expressions (C version). */
 
 %inline %{
+// Suppress warnings about constant comparisons.
+#pragma GCC diagnostic ignored "-Wbool-compare"
 
 /* % didn't work in SWIG 1.3.40 and earlier. */
 const int X = 123%7;
@@ -31,6 +33,14 @@ double d_array[12 % 9];
 #else
 #define TEST_I 0
 #endif
+
+/* Regression test for bug with losing parentheses around < and > operators,
+ * fixed in 4.2.0.
+ */
+#define XX (2<(2<2))
+#define YY (2>(2>2))
+int xx() { return XX; }
+int yy() { return YY; }
 
 /* sizeof didn't work on an expression before SWIG 4.1.0 except for cases where
  * the expression was in parentheses and looked syntactically like a type (so

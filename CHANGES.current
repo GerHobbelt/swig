@@ -7,6 +7,84 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-11-19: olly
+	    Fix handling of constant expressions containing < and > to not
+	    drop parentheses around the subexpression as doing so can change
+	    its value in some cases.
+
+2023-11-18: yasamoka, jmarrec
+            [Python] #2639 Add std_filesystem.i for wrapping std::filesystem::path
+            with pathlib.Path.
+
+2023-11-17: chrstphrchvz
+	    [Tcl] #2711 Fix -Wmissing-braces warning in generated code.
+
+2023-11-17: chrstphrchvz
+	    [Tcl] #2710 Stop using Tcl's CONST macro.  It's no longer needed
+	    and is to be deprecated in Tcl 8.7, and removed in Tcl 9.0.
+
+2023-11-08: wsfulton
+            [C#] Replace empty() method with IsEmpty property for std::vector, std::list, std::map
+            containers for consistency across all containers.
+
+            The empty() method is actually still wrapped, but as a private proxy method. For backwards
+            compatibility, the method can be made public again using %csmethodmodifiers for all
+            vectors as follows:
+
+              %extend std::vector {
+                %csmethodmodifiers empty() const "public"
+              }
+              %include "std_vector.i"
+
+            or alternatively for each individual %template instantiation as follows:
+
+              %csmethodmodifiers std::vector<double>::empty() const "public"
+              %template(VectorDouble) std::vector<double>;
+
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2023-11-08: wsfulton
+            [C#] Add std_unordered_set.i for wrapping std::std_unordered_set, implementing
+            C# System.Collections.Generic.ISet<>.
+
+2023-11-09: olly
+	    #2591 SWIG now supports command line options -std=cXX and
+	    -std=c++XX to specify the C/C++ standards version.  The only effect
+	    of these options is to set appropriate values for __STDC_VERSION__
+	    and __cplusplus respectively, which is useful if you're wrapping
+	    headers which have preprocessor checks based on their values.
+
+2023-11-09: olly
+	    SWIG now defines __STDC__ to 1 to match the behaviour of ISO C/C++
+	    compilers - previously it had an empty value.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2023-11-09: olly
+	    When -c++ is used, SWIG now defines __cplusplus to be 199711L (the
+	    value for C++98) by default - previously its value was set to
+	    __cplusplus.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2023-11-08: emmenlau
+            #2480 [C#] Add std_unordered_map.i for wrapping std::std_unordered_map, implementing
+            C# System.Collections.Generic.IDictionary<>.
+
+2023-11-06: wsfulton
+            [D, Java] Add the dbegin option to the %module directive for generating code at
+            the beginning of every D file. Similarly javabegin for Java. This enables one
+            to add a common comment at the start of each D/Java file.
+
+2023-11-06: wsfulton
+            [C#] #2681 Support nullable reference types. A generic C# option to the
+            %module directive allows one to add in any code at the beginning of every
+            C# file. This can add the #nullable enable preprocessor directive at the beginning
+            of every C# file in order to enable nullable reference types as follows:
+
+              %module(csbegin="#nullable enable\n") mymodule
+
 2023-10-21: wsfulton
             [Python] #1783 Don't swallow all exceptions into a NotImplemented return
             when wrapping operators which are marked with %pythonmaybecall. Corrects the
@@ -479,8 +557,6 @@ Version 4.2.0 (in progress)
 2023-05-25: olly
 	    C++11 `auto` variables and `decltype()` can now deduce the
 	    type of some expressions which involve literals of built-in types.
-	    Currently int is not supported due to the parser misusing T_INT
-	    for situations where the type isn't actually known.
 
 2023-05-25: olly
 	    #1125 Support parsing C++11 auto variables.  This uses the
@@ -537,22 +613,6 @@ Version 4.2.0 (in progress)
 	    code generation if needed", but it's never been used for that
 	    purpose in over 20 years, and has never been documented outside of
 	    CHANGES.
-
-2023-05-18: olly
-	    SWIG now defines __STDC__ to 1 to match the behaviour of ISO C/C++
-	    compilers, rather than to have an empty value.
-
-	    *** POTENTIAL INCOMPATIBILITY ***
-
-2023-05-18: olly
-	    #2591 The value of __cplusplus SWIG defines can now be overridden
-	    on the command line, e.g. using -D__cplusplus=201103L which is
-	    useful if you're wrapping headers which have preprocessor checks
-	    based on its value.  By default SWIG now defines __cplusplus to
-	    199711L (the value for C++98) rather than setting its value to
-	    be __cplusplus.
-
-	    *** POTENTIAL INCOMPATIBILITY ***
 
 2023-05-18: olly
 	    #2591 Add new -U command line option to undefine a preprocessor
