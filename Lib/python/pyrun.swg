@@ -259,21 +259,21 @@ swig_varlink_str(PyObject *o) {
   for (var = v->vars; var; var=var->next) {
     tail = PyUnicode_FromString(var->name);
     joined = PyUnicode_Concat(str, tail);
-    Py_DecRef(str);
-    Py_DecRef(tail);
+    SWIG_Py_DECREF(str);
+    SWIG_Py_DECREF(tail);
     str = joined;
     if (var->next) {
         tail = PyUnicode_InternFromString(", ");
         joined = PyUnicode_Concat(str, tail);
-        Py_DecRef(str);
-        Py_DecRef(tail);
+        SWIG_Py_DECREF(str);
+        SWIG_Py_DECREF(tail);
         str = joined;
     }
   }
   tail = PyUnicode_InternFromString(")");
   joined = PyUnicode_Concat(str, tail);
-  Py_DecRef(str);
-  Py_DecRef(tail);
+  SWIG_Py_DECREF(str);
+  SWIG_Py_DECREF(tail);
   str = joined;
 #else
   PyObject *str = PyString_FromString("(");
@@ -669,14 +669,14 @@ SwigPyObject_repr(SwigPyObject *v)
     if (nrep) {
 # if PY_VERSION_HEX >= 0x03000000
       PyObject *joined = PyUnicode_Concat(repr, nrep);
-      Py_DecRef(repr);
-      Py_DecRef(nrep);
+      SWIG_Py_DECREF(repr);
+      SWIG_Py_DECREF(nrep);
       repr = joined;
 # else
       PyString_ConcatAndDel(&repr,nrep);
 # endif
     } else {
-      Py_DecRef(repr);
+      SWIG_Py_DECREF(repr);
       repr = NULL;
     }
   }
@@ -745,11 +745,14 @@ SwigPyObject_Check(PyObject *op) {
     return 1;
   return (strcmp(op_type->tp_name, "SwigPyObject") == 0);
 #else
+# ifdef Py_LIMITED_API
+  int cmp;
+  PyObject *tp_name;
+#endif
   if (op_type == target_tp)
     return 1;
 # ifdef Py_LIMITED_API
-  int cmp;
-  PyObject *tp_name = PyObject_GetAttrString((PyObject *)op_type, "__name__");
+  tp_name = PyObject_GetAttrString((PyObject *)op_type, "__name__");
   if (!tp_name)
     return 0;
   cmp = PyUnicode_CompareWithASCIIString(tp_name, "SwigPyObject");
@@ -822,7 +825,7 @@ SwigPyObject_dealloc(PyObject *v)
 #ifdef SWIGPYTHON_BUILTIN
   SWIG_Py_XDECREF(sobj->dict);
 #endif
-  PyObject_DEL(v);
+  PyObject_Free(v);
 }
 
 SWIGRUNTIME PyObject* 
@@ -1132,12 +1135,15 @@ SwigPyPacked_type(void) {
 
 SWIGRUNTIMEINLINE int
 SwigPyPacked_Check(PyObject *op) {
+#ifdef Py_LIMITED_API
+  int cmp;
+  PyObject *tp_name;
+#endif
   PyTypeObject* op_type = Py_TYPE(op);
   if (op_type == SwigPyPacked_TypeOnce())
     return 1;
 #ifdef Py_LIMITED_API
-  int cmp;
-  PyObject *tp_name = PyObject_GetAttrString((PyObject *)op_type, "__name__");
+  tp_name = PyObject_GetAttrString((PyObject *)op_type, "__name__");
   if (!tp_name)
     return 0;
   cmp = PyUnicode_CompareWithASCIIString(tp_name, "SwigPyPacked");
@@ -1155,7 +1161,7 @@ SwigPyPacked_dealloc(PyObject *v)
     SwigPyPacked *sobj = (SwigPyPacked *) v;
     free(sobj->pack);
   }
-  PyObject_DEL(v);
+  PyObject_Free(v);
 }
 
 SWIGRUNTIME PyTypeObject*
@@ -1284,7 +1290,7 @@ SwigPyPacked_New(void *ptr, size_t size, swig_type_info *ty)
       sobj->ty   = ty;
       sobj->size = size;
     } else {
-      PyObject_DEL((PyObject *) sobj);
+      PyObject_Free((PyObject *)sobj);
       sobj = 0;
     }
   }

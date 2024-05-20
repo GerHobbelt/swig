@@ -17,10 +17,6 @@
 
 #endif
 
-#ifndef Py_TYPE
-#  define Py_TYPE(op) ((op)->ob_type)
-#endif
-
 /* SWIG APIs for compatibility of both Python 2 & 3 */
 
 #if PY_VERSION_HEX >= 0x03000000
@@ -39,10 +35,11 @@ SWIG_PyUnicode_AsUTF8AndSize(PyObject *str, Py_ssize_t *psize, PyObject **pbytes
   *pbytes = NULL;
   return PyUnicode_AsUTF8AndSize(str, psize);
 # else
-   *pbytes = PyUnicode_AsUTF8String(str);
-   const char *chars = *pbytes ? PyBytes_AsString(*pbytes) : NULL;
-   if (chars && psize)
-     *psize = PyBytes_Size(*pbytes);
+  const char *chars;
+  *pbytes = PyUnicode_AsUTF8String(str);
+  chars = *pbytes ? PyBytes_AsString(*pbytes) : NULL;
+  if (chars && psize)
+    *psize = PyBytes_Size(*pbytes);
   return chars;
 # endif
 #else
@@ -62,10 +59,6 @@ SWIG_Python_str_FromChar(const char *c)
   return PyString_FromString(c);
 #endif
 }
-
-#ifndef PyObject_DEL
-# define PyObject_DEL PyObject_Del
-#endif
 
 /* SWIGPY_USE_CAPSULE is no longer used within SWIG itself, but some user interface files check for it. */
 # define SWIGPY_USE_CAPSULE
