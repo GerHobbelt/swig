@@ -1762,7 +1762,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <str>      idcolon idcolontail idcolonnt idcolontailnt idtemplate idtemplatetemplate stringbrace stringbracesemi;
 %type <str>      string stringnum wstring;
 %type <tparms>   template_parms;
-%type <dtype>    cpp_end cpp_vend;
+%type <dtype>    cpp_vend;
 %type <intvalue> rename_namewarn;
 %type <ptype>    type_specifier primitive_type_list ;
 %type <node>     fname stringtype;
@@ -1779,13 +1779,21 @@ static SwigType *deduce_type(const struct Define *dtype) {
   if (!dtype->val) return NULL;
   Node *n = Swig_symbol_clookup(dtype->val, 0);
   if (n) {
+    if (Strcmp(nodeType(n),"enumitem") == 0) {
+      /* For an enumitem, the "type" attribute gives us the underlying integer
+       * type - we want the "type" attribute from the enum itself, which is
+       * "parentNode".
+       */
+      n = Getattr(n, "parentNode");
+    }
     return Getattr(n, "type");
   } else if (dtype->type != T_AUTO && dtype->type != T_UNKNOWN) {
     /* Try to deduce the type from the T_* type code. */
-    return NewSwigType(dtype->type);
-  } else {
-    return NULL;
+    String *deduced_type = NewSwigType(dtype->type);
+    if (Len(deduced_type) > 0) return deduced_type;
+    Delete(deduced_type);
   }
+  return NULL;
 }
 
 %}
@@ -4752,65 +4760,43 @@ cpp_constructor_decl : storage_class type LPAREN parms RPAREN ctor_end {
               }
               ;
 
-/* A destructor (hopefully) */
+/* A destructor */
 
-cpp_destructor_decl : NOT idtemplate LPAREN parms RPAREN cpp_end {
-	       String *name = SwigType_templateprefix($2); /* A destructor can optionally be declared with template parameters before C++20, strip these off */
+cpp_destructor_decl : storage_class NOT idtemplate LPAREN parms RPAREN cpp_vend {
+	       String *name = SwigType_templateprefix($3); /* A destructor can optionally be declared with template parameters before C++20, strip these off */
 	       Insert(name, 0, "~");
 	       $$ = new_node("destructor");
-	       Setattr($$,"name",name);
+	       Setattr($$, "storage", $1);
+	       Setattr($$, "name", name);
 	       Delete(name);
 	       if (Len(scanner_ccode)) {
 		 String *code = Copy(scanner_ccode);
-		 Setattr($$,"code",code);
+		 Setattr($$, "code", code);
 		 Delete(code);
 	       }
 	       {
 		 String *decl = NewStringEmpty();
-		 SwigType_add_function(decl,$4);
-		 Setattr($$,"decl",decl);
+		 SwigType_add_function(decl, $5);
+		 Setattr($$, "decl", decl);
 		 Delete(decl);
 	       }
-	       Setattr($$,"throws",$6.throws);
-	       Setattr($$,"throw",$6.throwf);
-	       Setattr($$,"noexcept",$6.nexcept);
-	       Setattr($$,"final",$6.final);
-	       if ($6.val)
-	         Setattr($$,"value",$6.val);
-	       if ($6.qualifier)
-		 Swig_error(cparse_file, cparse_line, "Destructor %s %s cannot have a qualifier.\n", Swig_name_decl($$), SwigType_str($6.qualifier, 0));
+	       Setattr($$, "throws", $7.throws);
+	       Setattr($$, "throw", $7.throwf);
+	       Setattr($$, "noexcept", $7.nexcept);
+	       Setattr($$, "final", $7.final);
+	       if ($7.val) {
+		 if (Equal($7.val, "0")) {
+		   if (!Strstr($1, "virtual"))
+		     Swig_error(cparse_file, cparse_line, "Destructor %s uses a pure specifier but is not virtual.\n", Swig_name_decl($$));
+		 } else if (!(Equal($7.val, "delete") || Equal($7.val, "default"))) {
+		   Swig_error(cparse_file, cparse_line, "Destructor %s has an invalid pure specifier, only = 0 is allowed.\n", Swig_name_decl($$));
+		 }
+		 Setattr($$, "value", $7.val);
+	       }
+	       /* TODO: check all storage decl-specifiers are valid */
+	       if ($7.qualifier)
+		 Swig_error(cparse_file, cparse_line, "Destructor %s %s cannot have a qualifier.\n", Swig_name_decl($$), SwigType_str($7.qualifier, 0));
 	       add_symbols($$);
-	      }
-
-/* A virtual destructor */
-
-              | VIRTUAL NOT idtemplate LPAREN parms RPAREN cpp_vend {
-		String *name = SwigType_templateprefix($3); /* A destructor can optionally be declared with template parameters before C++20, strip these off */
-		Insert(name, 0, "~");
-		$$ = new_node("destructor");
-		Setattr($$,"storage","virtual");
-		Setattr($$,"name",name);
-		Delete(name);
-		Setattr($$,"throws",$7.throws);
-		Setattr($$,"throw",$7.throwf);
-		Setattr($$,"noexcept",$7.nexcept);
-		Setattr($$,"final",$7.final);
-		if ($7.val)
-		  Setattr($$,"value",$7.val);
-		if (Len(scanner_ccode)) {
-		  String *code = Copy(scanner_ccode);
-		  Setattr($$,"code",code);
-		  Delete(code);
-		}
-		{
-		  String *decl = NewStringEmpty();
-		  SwigType_add_function(decl,$5);
-		  Setattr($$,"decl",decl);
-		  Delete(decl);
-		}
-		if ($7.qualifier)
-		  Swig_error(cparse_file, cparse_line, "Destructor %s %s cannot have a qualifier.\n", Swig_name_decl($$), SwigType_str($7.qualifier, 0));
-		add_symbols($$);
 	      }
               ;
 
@@ -4976,41 +4962,6 @@ cpp_swig_directive: pragma_directive
              | clear_directive
              | echo_directive
              ;
-
-cpp_end        : cpp_const SEMI {
-	            Clear(scanner_ccode);
-		    $$.val = 0;
-		    $$.qualifier = $1.qualifier;
-		    $$.refqualifier = $1.refqualifier;
-		    $$.bitfield = 0;
-		    $$.throws = $1.throws;
-		    $$.throwf = $1.throwf;
-		    $$.nexcept = $1.nexcept;
-		    $$.final = $1.final;
-               }
-               | cpp_const EQUAL default_delete SEMI {
-	            Clear(scanner_ccode);
-		    $$.val = $3.val;
-		    $$.qualifier = $1.qualifier;
-		    $$.refqualifier = $1.refqualifier;
-		    $$.bitfield = 0;
-		    $$.throws = $1.throws;
-		    $$.throwf = $1.throwf;
-		    $$.nexcept = $1.nexcept;
-		    $$.final = $1.final;
-               }
-               | cpp_const LBRACE { 
-		    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
-		    $$.val = 0;
-		    $$.qualifier = $1.qualifier;
-		    $$.refqualifier = $1.refqualifier;
-		    $$.bitfield = 0;
-		    $$.throws = $1.throws;
-		    $$.throwf = $1.throwf;
-		    $$.nexcept = $1.nexcept;
-		    $$.final = $1.final;
-	       }
-               ;
 
 cpp_vend       : cpp_const SEMI { 
                      Clear(scanner_ccode);
@@ -6569,7 +6520,12 @@ expr           : valexpr
                        $$.val = NewStringf("%s::%s", q, Getattr(n,"name"));
                        Delete(q);
                      }
-                   }
+		   } else {
+		     SwigType *type = Getattr(n, "type");
+		     if (type) {
+		       $$.type = SwigType_type(type);
+		     }
+		   }
 		 }
                }
 	       ;
@@ -6752,11 +6708,33 @@ valexpr        : exprsimple
  	       }
                | AND expr {
 		 $$ = $2;
-                 $$.val = NewStringf("&%s",$2.val);
+		 $$.val = NewStringf("&%s", $2.val);
+		 $$.rawval = 0;
+		 switch ($$.type) {
+		   case T_CHAR:
+		     $$.type = T_STRING;
+		     break;
+		   case T_WCHAR:
+		     $$.type = T_WSTRING;
+		     break;
+		   default:
+		     $$.type = T_POINTER;
+		 }
 	       }
                | STAR expr {
 		 $$ = $2;
-                 $$.val = NewStringf("*%s",$2.val);
+		 $$.val = NewStringf("*%s", $2.val);
+		 $$.rawval = 0;
+		 switch ($$.type) {
+		   case T_STRING:
+		     $$.type = T_CHAR;
+		     break;
+		   case T_WSTRING:
+		     $$.type = T_WCHAR;
+		     break;
+		   default:
+		     $$.type = T_UNKNOWN;
+		 }
 	       }
 	       ;
 
