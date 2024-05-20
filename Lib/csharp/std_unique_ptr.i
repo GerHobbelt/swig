@@ -9,14 +9,17 @@
  * ----------------------------------------------------------------------------- */
 
 %define %unique_ptr(TYPE)
-%typemap (ctype) std::unique_ptr< TYPE > "void *"
-%typemap (imtype, out="System.IntPtr") std::unique_ptr< TYPE > "global::System.Runtime.InteropServices.HandleRef"
-%typemap (cstype) std::unique_ptr< TYPE > "$typemap(cstype, TYPE)"
+%typemap (ctype) std::unique_ptr< TYPE >, std::unique_ptr< TYPE > && "void *"
+%typemap (imtype, out="System.IntPtr") std::unique_ptr< TYPE >, std::unique_ptr< TYPE > && "global::System.Runtime.InteropServices.HandleRef"
+%typemap (cstype) std::unique_ptr< TYPE >, std::unique_ptr< TYPE > && "$typemap(cstype, TYPE)"
 
 %typemap(in) std::unique_ptr< TYPE >
 %{ $1.reset((TYPE *)$input); %}
+%typemap(in) std::unique_ptr< TYPE > &&
+%{ $*1_ltype $1_uptr((TYPE *)$input);
+  $1 = &$1_uptr; %}
 
-%typemap(csin) std::unique_ptr< TYPE > "$typemap(cstype, TYPE).swigRelease($csinput)"
+%typemap(csin) std::unique_ptr< TYPE >, std::unique_ptr< TYPE > && "$typemap(cstype, TYPE).swigRelease($csinput)"
 
 %typemap (out) std::unique_ptr< TYPE > %{
   $result = (void *)$1.release();
@@ -28,7 +31,7 @@
     return ret;
   }
 
-%typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER, equivalent="TYPE *") std::unique_ptr< TYPE > ""
+%typemap(typecheck, precedence=SWIG_TYPECHECK_POINTER, equivalent="TYPE *") std::unique_ptr< TYPE >, std::unique_ptr< TYPE > && ""
 
 %template() std::unique_ptr< TYPE >;
 %enddef

@@ -36,6 +36,10 @@ jobs:
           CPPFLAGS: "-DDOH_POISON"
         - SWIGLANG: ""
           GCC: 7
+          CPPSTD: c++98
+          CSTD: c99
+        - SWIGLANG: ""
+          GCC: 7
         - SWIGLANG: ""
           GCC: 8
         - SWIGLANG: ""
@@ -360,6 +364,17 @@ jobs:
       EXTRA_CXXFLAGS: ${{ matrix.EXTRA_CXXFLAGS }}
 
     steps:
+    - name: Machine Info
+      run: |
+          echo "nproc..."
+          nproc --all
+          echo "uname..."
+          uname --all
+          echo "meminfo..."
+          cat /proc/meminfo
+          echo "lsb-release..."
+          cat /etc/lsb-release
+
     - name: Checkout
       uses: actions/checkout@v4
       with:
@@ -476,8 +491,12 @@ jobs:
                 ;;
               ocaml)
                 # `make check-ocaml-test-suite` fails with parallel make with:
+                #
                 # File "swig.ml", line 1:
                 # Error: Could not find the .cmi file for interface swig.mli.
+                #
+                # Apparently we ought to be using `ocamldep` to generate make
+                # dependencies.
                 unset SWIGJOBS
                 ;;
             esac
