@@ -332,7 +332,8 @@ public:
   virtual int top(Node *n) {
 
     // Get any options set in the module directive
-    Node *optionsnode = Getattr(Getattr(n, "module"), "options");
+    Node *module = Getattr(n, "module");
+    Node *optionsnode = Getattr(module, "options");
 
     if (optionsnode) {
       if (Getattr(optionsnode, "jniclassname"))
@@ -417,9 +418,9 @@ public:
     constants_interface_name = NewStringf("%sConstants", module_class_name);
 
     // module class and intermediary classes are always created
-    if (!addSymbol(imclass_name, n))
+    if (!addSymbol(imclass_name, module))
       return SWIG_ERROR;
-    if (!addSymbol(module_class_name, n))
+    if (!addSymbol(module_class_name, module))
       return SWIG_ERROR;
 
     imclass_class_code = NewString("");
@@ -1245,11 +1246,6 @@ public:
 	return SWIG_NOWRAP;
 
       String *nspace = Getattr(n, "sym:nspace"); // NSpace/getNSpace() only works during Language::enumDeclaration call
-      if (proxy_flag && !is_wrapping_class()) {
-	// Global enums / enums in a namespace
-	assert(!full_imclass_name);
-	constructIntermediateClassName(n);
-      }
 
       enum_code = NewString("");
       String *symname = Getattr(n, "sym:name");
@@ -1300,8 +1296,19 @@ public:
 	}
       }
 
+      if (proxy_flag && !is_wrapping_class()) {
+	// Global enums / enums in a namespace
+	assert(!full_imclass_name);
+	constructIntermediateClassName(n);
+      }
+
       // Emit each enum item
       Language::enumDeclaration(n);
+
+      if (proxy_flag && !is_wrapping_class()) {
+	Delete(full_imclass_name);
+	full_imclass_name = 0;
+      }
 
       if ((enum_feature != SimpleEnum) && symname && typemap_lookup_type) {
 	// Wrap (non-anonymous) C/C++ enum within a typesafe, typeunsafe or proper Java enum
@@ -1369,11 +1376,6 @@ public:
 
       Delete(enum_code);
       enum_code = NULL;
-
-      if (proxy_flag && !is_wrapping_class()) {
-	Delete(full_imclass_name);
-	full_imclass_name = 0;
-      }
     }
     return SWIG_OK;
   }
