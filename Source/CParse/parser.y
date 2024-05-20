@@ -321,7 +321,14 @@ Hash *Swig_cparse_features(void) {
   return features_hash;
 }
 
-/* Fully qualify any template parameters */
+/* -----------------------------------------------------------------------------
+ * feature_identifier_fix()
+ *
+ * If a template, return template with all template parameters fully resolved.
+ *
+ * This is a copy and modification of typemap_identifier_fix.
+ * ----------------------------------------------------------------------------- */
+
 static String *feature_identifier_fix(String *s) {
   String *tp = SwigType_istemplate_templateprefix(s);
   if (tp) {
@@ -411,7 +418,6 @@ static void add_symbols(Node *n) {
   }
   while (n) {
     String *symname = 0;
-    /* for friends, we need to pop the scope once */
     String *old_prefix = 0;
     Symtab *old_scope = 0;
     int isfriend = inclass && Checkattr(n, "storage", "friend");
@@ -421,28 +427,24 @@ static void add_symbols(Node *n) {
     if (inclass) {
       String *name = Getattr(n, "name");
       if (isfriend) {
-	/* for friends, we need to add the scopename if needed */
+	/* For friends, set the scope to the same as the class that the friend is defined/declared in, that is, pop scope once */
 	String *prefix = name ? Swig_scopename_prefix(name) : 0;
 	old_prefix = Namespaceprefix;
 	old_scope = Swig_symbol_popscope();
 	Namespaceprefix = Swig_symbol_qualifiedscopename(0);
 	if (!prefix) {
+	  /* To check - this should probably apply to operators too */
 	  if (name && !is_operator(name) && Namespaceprefix) {
-	    String *nname = NewStringf("%s::%s", Namespaceprefix, name);
-	    Setattr(n,"name",nname);
-	    Delete(nname);
+	    String *friendusing = NewStringf("using namespace %s;", Namespaceprefix);
+	    Setattr(n, "friendusing", friendusing);
+	    Delete(friendusing);
 	  }
 	} else {
-	  Symtab *st = Swig_symbol_getscope(prefix);
-	  String *ns = st ? Getattr(st,"name") : prefix;
-	  String *base  = Swig_scopename_last(name);
-	  String *nname = NewStringf("%s::%s", ns, base);
-	  Setattr(n,"name",nname);
-	  Delete(nname);
-	  Delete(base);
-	  Delete(prefix);
+	  /* Qualified friend declarations should not be possible as they are ignored in the parse tree */
+	  /* TODO: uncomment out for swig-4.3.0
+	  assert(0);
+	  */
 	}
-	Namespaceprefix = 0;
       } else if (Equal(nodeType(n), "using")) {
 	String *uname = Getattr(n, "uname");
 	Node *cls = current_class ? current_class : currentOuterClass; /* Current class seems to vary depending on whether it is a template class or a plain class */
@@ -1776,8 +1778,9 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 
 /* C++ decltype/auto type deduction. */
 static SwigType *deduce_type(const struct Define *dtype) {
+  Node *n;
   if (!dtype->val) return NULL;
-  Node *n = Swig_symbol_clookup(dtype->val, 0);
+  n = Swig_symbol_clookup(dtype->val, 0);
   if (n) {
     if (Strcmp(nodeType(n),"enumitem") == 0) {
       /* For an enumitem, the "type" attribute gives us the underlying integer
@@ -3166,10 +3169,13 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      if ($5.val && $5.type) {
 		/* store initializer type as it might be different to the declared type */
 		SwigType *valuetype = NewSwigType($5.type);
-		if (Len(valuetype) > 0)
-		  Setattr($$,"valuetype",valuetype);
-		else
+		if (Len(valuetype) > 0) {
+		  Setattr($$, "valuetype", valuetype);
+		} else {
+		  /* If we can't determine the initializer type use the declared type. */
+		  Setattr($$, "valuetype", $2);
 		  Delete(valuetype);
+		}
 	      }
 	      if (!$6) {
 		if (Len(scanner_ccode)) {
@@ -3193,27 +3199,26 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      }
 
 	      if ($3.id) {
-		/* Look for "::" declarations (ignored) */
-		if (Strstr($3.id, "::")) {
+		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
+		String *p = Swig_scopename_prefix($3.id);
+		if (p) {
 		  /* This is a special case. If the scope name of the declaration exactly
 		     matches that of the declaration, then we will allow it. Otherwise, delete. */
-		  String *p = Swig_scopename_prefix($3.id);
-		  if (p) {
-		    if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
-			(Classprefix && Strcmp(p, Classprefix) == 0)) {
-		      String *lstr = Swig_scopename_last($3.id);
-		      Setattr($$, "name", lstr);
-		      Delete(lstr);
-		      set_nextSibling($$, $6);
-		    } else {
-		      Delete($$);
-		      $$ = $6;
-		    }
-		    Delete(p);
+		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
+		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
+		    String *lstr = Swig_scopename_last($3.id);
+		    Setattr($$, "name", lstr);
+		    Delete(lstr);
+		    set_nextSibling($$, $6);
 		  } else {
 		    Delete($$);
 		    $$ = $6;
 		  }
+		  Delete(p);
+		} else if (Strncmp($3.id, "::", 2) == 0) {
+		  /* global scope declaration/definition ignored */
+		  Delete($$);
+		  $$ = $6;
 		} else {
 		  set_nextSibling($$, $6);
 		}
@@ -3246,7 +3251,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "noexcept", $4.nexcept);
 	      Setattr($$, "final", $4.final);
 
-	      if (Strstr($3.id, "::")) {
+	      if ($3.id) {
+		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
 		String *p = Swig_scopename_prefix($3.id);
 		if (p) {
 		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
@@ -3259,7 +3265,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		    $$ = 0;
 		  }
 		  Delete(p);
-		} else {
+		} else if (Strncmp($3.id, "::", 2) == 0) {
+		  /* global scope declaration/definition ignored */
 		  Delete($$);
 		  $$ = 0;
 		}
@@ -3300,8 +3307,9 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		}
 	      }
 
-	      if (Strstr($3.id,"::")) {
-                String *p = Swig_scopename_prefix($3.id);
+	      if ($3.id) {
+		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
+		String *p = Swig_scopename_prefix($3.id);
 		if (p) {
 		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
 		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
@@ -3314,7 +3322,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		    $$ = $9;
 		  }
 		  Delete(p);
-		} else {
+		} else if (Strncmp($3.id, "::", 2) == 0) {
+		  /* global scope declaration/definition ignored */
 		  Delete($$);
 		  $$ = $9;
 		}
@@ -3348,8 +3357,9 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "noexcept", $4.nexcept);
 	      Setattr($$, "final", $4.final);
 
-	      if (Strstr($3.id, "::")) {
-                String *p = Swig_scopename_prefix($3.id);
+	      if ($3.id) {
+		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
+		String *p = Swig_scopename_prefix($3.id);
 		if (p) {
 		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
 		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
@@ -3361,7 +3371,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		    $$ = 0;
 		  }
 		  Delete(p);
-		} else {
+		} else if (Strncmp($3.id, "::", 2) == 0) {
+		  /* global scope declaration/definition ignored */
 		  Delete($$);
 		  $$ = 0;
 		}
@@ -4445,10 +4456,10 @@ templateparameter : templcpptype def_args {
 		  }
 		  | parm {
 		    Parm *p = $1;
+		    String *name = Getattr(p, "name");
 		    $$ = $1;
 
 		    /* Correct the 'type name' parameter string, split into the appropriate "name" and "type" attributes */
-		    String *name = Getattr(p, "name");
 		    if (!name) {
 		      String *type = Getattr(p, "type");
 		      if ((Strncmp(type, "class ", 6) == 0) || (Strncmp(type, "typename ", 9) == 0)) {
@@ -4732,7 +4743,10 @@ cpp_member   : cpp_member_no_dox
 */
   
 cpp_constructor_decl : storage_class type LPAREN parms RPAREN ctor_end {
-              if (inclass || extendmode) {
+	      /* Cannot be a constructor declaration/definition if parsed as a friend destructor/constructor
+	         or a badly declared friend function without return type */
+	      int isfriend = Strstr($1, "friend") != NULL;
+	      if (!isfriend && (inclass || extendmode)) {
 	        String *name = SwigType_templateprefix($2); /* A constructor can optionally be declared with template parameters before C++20, strip these off */
 		SwigType *decl = NewStringEmpty();
 		$$ = new_node("constructor");
@@ -6878,7 +6892,15 @@ exprcompound   : expr PLUS expr {
 		 }
 		 $$.val = NewStringf("%s%s",qty,scanner_ccode);
 		 Clear(scanner_ccode);
+		 // Try to deduce the type - this could be a C++ "constructor
+		 // cast" such as `double(4)` or a function call such as
+		 // `some_func()`.  In the latter case we get T_USER, but that
+		 // is wrong so we map it to T_UNKNOWN until we can actually
+		 // deduce the return type of a function call (which is
+		 // complicated because the return type can vary between
+		 // overloaded forms).
 		 $$.type = SwigType_type(qty);
+		 if ($$.type == T_USER) $$.type = T_UNKNOWN;
 		 Delete(qty);
                }
                ;
