@@ -37,3 +37,22 @@ decltype(A()) constructed_object;
 // Spaceship operator.
 #include <compare>
 decltype(1 <=> 2) spaceship = (1 <=> 2);
+
+// Array dereference.
+decltype(("abc"[1])) array_deref = 0;
+constexpr auto array_deref2{"abc"[1]};
+// FIXME: SWIG fails to parse these cases:
+#ifndef SWIG
+decltype("abc"[1]) array_deref3 = 0;
+constexpr auto array_deref4 = ("abc"[1]);
+constexpr auto array_deref5("abc"[1]);
+#endif
+
+// Comparisons.
+// FIXME SWIG fails to parse both these with `Error: Missing ')'. Reached end of input.`
+//decltype(1 < 2) lt_test = 0;
+//decltype(1 > 2) gt_test = 0;
+
+// Assignment.
+bool a;
+decltype((a = true) + 1) assignment = true;

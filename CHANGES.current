@@ -7,6 +7,51 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.2.0 (in progress)
 ===========================
 
+2023-12-20: crhilton
+            [C#] #2722 Add support the "cs:defaultargs" feature.
+
+            This adds a way to wrap C++ functions that have default arguments
+            with an equivalent C# function with default arguments, instead of
+            generating an overloaded C# method for each defaulted argument.
+
+2023-12-20: vadz, vadimcn, wangito33, wsfulton, clintonstimpson
+            [Python] #1613 #1687 #1727 #2190 #2727 #2428 Add support for the Python stable
+            ABI using default Python options. Code is generated that compiles when
+            setting the C macro Py_LIMITED_API to 0x03040000 (at C/C++ compile time).
+            Note that the -builtin, -fast (used by -O) options are not supported.
+
+2023-12-20: wsfulton
+            [Python] More efficient input string marshalling for Python 3.
+
+            Previously a copy of a string was made while converting from a Python 3
+            string to a char * or std::string. This copy is no longer needed making
+            string marshalling more efficient. Does not apply to the stable ABI
+            targetting Python < 3.10 where a copy is still required where the stable
+            ABI does not provide PyUnicode_AsUTF8AndSize.
+
+2023-12-20: wsfulton
+            #2190 Replace SWIG_Python_str_AsChar with SWIG_PyUnicode_AsUTF8AndSize.
+
+            SWIG_Python_str_AsChar has undefined behaviour when Py_LIMITED_API is defined
+            as it returns a pointer to a string in a PyBytes object that no longer exists.
+
+            SWIG_PyUnicode_AsUTF8AndSize is an efficient replacement, but requires a
+            different API and the caller to decrement the refcount on the intermediate
+            PyObject in the Py_LIMITED_API < 0x030A0000 implementation. The alternative
+            would have required copying the returned char * string as was done in a
+            previous implementation requiring a call to the defunct SWIG_Python_str_DelForPy3
+            function.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2023-12-14: PaulObermeier
+	    [Tcl] #2730 Rename SWIG’s Tcl_GetBoolFromObj() since Tcl 8.7 (TIP 618)
+	    introduces a function with the same name.
+
+2023-12-13: chrstphrchvz
+	    [Tcl] #2729 Use Tcl_GetString() instead of Tcl_GetStringFromObj(…, NULL)
+	    for compatibility with Tcl 9.
+
 2023-12-03: olly
 	    [Ocaml] Remove -suffix command line option which has emitted a
 	    deprecation warning since SWIG 3.0.4 - if you want to specify
@@ -435,7 +480,7 @@ Version 4.2.0 (in progress)
 	    #2486 Fix handling of template in array size, which was being
 	    rejected by SWIG because the type string contains '<' not followed
 	    by '('.  Drop this check as it should be unnecessary now since the
-	    fixes for #1036 ensure that template parameters are enclosed within
+	    fixes that ensure that template parameters are enclosed within
 	    '<(' and ')>'.
 
 2023-06-16: olly
@@ -533,7 +578,7 @@ Version 4.2.0 (in progress)
 				Use %shared_ptr(TYPE) instead.
 	    SWIG_STD_VECTOR_SPECIALIZE(CSTYPE, CTYPE)
 				Use SWIG_STD_VECTOR_ENHANCED(CTYPE) instead.
-	    SWIG_STD_VECTOR_SPECIALIZE_MINIMUM(CSTYPE, CTYPE) macro
+	    SWIG_STD_VECTOR_SPECIALIZE_MINIMUM(CSTYPE, CTYPE)
 				No longer required - remove uses.
 	    specialize_std_map_on_both
 				No longer required - remove uses.
