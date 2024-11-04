@@ -141,7 +141,6 @@ jobs:
         - SWIGLANG: python
           VER: '3.13'
           CSTD: gnu99
-          continue-on-error: true # Python 3.13 is still in beta
         - SWIGLANG: python
           PY2: 2
           SWIG_FEATURES: -builtin
@@ -225,7 +224,7 @@ jobs:
           CPPSTD: c++11
         - SWIGLANG: ruby
           CPPSTD: c++11
-          VER: '3.3'
+          VER: '3.3.4' # cpp11_rvalue_reference_move testcase apparently started to fail on upgrade to 3.3.5, see https://github.com/swig/swig/issues/3030
         - SWIGLANG: ruby
           CPPSTD: c++11
         - SWIGLANG: scilab
@@ -335,6 +334,18 @@ jobs:
           CPPSTD: c++20
           GCC: 13
           os: ubuntu-22.04
+        - SWIGLANG: javascript
+          ENGINE: v8
+          CSTD: c++14
+          CPPSTD: c++14
+          VER: '7.8' # oldest we can easily test as libnode-dev in 20.04 doesn't have the V8 headers
+          os: ubuntu-22.04
+        - SWIGLANG: javascript
+          ENGINE: v8
+          CSTD: c++14
+          CPPSTD: c++14
+          VER: '10.2'
+          os: ubuntu-24.04
         # Experimental languages (these are allowed to fail)
         - SWIGLANG: mzscheme
           continue-on-error: true
@@ -474,16 +485,6 @@ jobs:
             make $SWIGJOBS check-errors-test-suite
           else
             case "$SWIGLANG" in
-              javascript)
-                case "$ENGINE" in
-                  v8 | jsc)
-                    # Running tests using v8 or jsc involves creating a custom
-                    # interpreter in Tools/javascript, which is currently broken
-                    # for parallel builds (we attempt to update this interpreter
-                    # while running, resulting in "Text file busy" error).
-                    unset SWIGJOBS
-                esac
-                ;;
               ocaml)
                 # `make check-ocaml-test-suite` fails with parallel make with:
                 #
