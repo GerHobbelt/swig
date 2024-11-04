@@ -777,11 +777,14 @@ private:
     }
     if (numval) {
       SwigType *resolved_type = SwigType_typedef_resolve_all(type);
-      if (Equal(resolved_type, "bool")) {
+      SwigType *unqualified_type = SwigType_strip_qualifiers(resolved_type);
+      if (Equal(unqualified_type, "bool")) {
 	Delete(resolved_type);
-	return NewString(*Char(numval) == '0' ? "False" : "True");
+	Delete(unqualified_type);
+	return NewString(*Char(numval) == '0' ? "false" : "true");
       }
       Delete(resolved_type);
+      Delete(unqualified_type);
       if (SwigType_ispointer(type) && Equal(v, "0"))
 	return NewString("None");
       return Copy(v);
@@ -791,9 +794,9 @@ private:
 	return SwigType_ispointer(type) ? NewString("nil") : NewString("0");
       // FIXME: TRUE and FALSE are not standard and could be defined in other ways
       if (Equal(v, "TRUE"))
-	return NewString("True");
+	return NewString("true");
       if (Equal(v, "FALSE"))
-	return NewString("False");
+	return NewString("false");
     }
     return 0;
   }
@@ -908,8 +911,6 @@ public:
     /* Add a symbol to the parser for conditional compilation */
     Preprocessor_define("SWIGRUBY 1", 0);
 
-    /* Add typemap definitions */
-    SWIG_typemap_lang("ruby");
     SWIG_config_file("ruby.swg");
     allow_overloading();
   }
@@ -3366,6 +3367,7 @@ public:
 
     /* emit the director method */
     if (status == SWIG_OK) {
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!Getattr(n, "defaultargs")) {
 	Replaceall(w->code, "$symname", symname);
 	Wrapper_print(w, f_directors);

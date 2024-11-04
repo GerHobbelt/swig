@@ -335,8 +335,6 @@ public:
     // use in our library files.
     Preprocessor_define("SWIG_D_VERSION 2", 0);
 
-    // Add typemap definitions
-    SWIG_typemap_lang("d");
     SWIG_config_file("d.swg");
 
     allow_overloading();
@@ -2347,6 +2345,7 @@ public:
       } else {
 	Replaceall(w->code, "$null", "");
       }
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!ignored_method)
 	Printv(director_dcallbacks_code, callback_def, callback_code, NIL);
       if (!Getattr(n, "defaultargs")) {

@@ -319,8 +319,6 @@ public:
     // Add a symbol to the parser for conditional compilation
     Preprocessor_define("SWIGJAVA 1", 0);
 
-    // Add typemap definitions
-    SWIG_typemap_lang("java");
     SWIG_config_file("java.swg");
 
     allow_overloading();
@@ -4518,6 +4516,7 @@ public:
       } else {
 	Replaceall(w->code, "$null", "");
       }
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!GetFlag(n, "feature:ignore"))
 	Printv(imclass_directors, callback_def, callback_code, NIL);
       if (!Getattr(n, "defaultargs")) {

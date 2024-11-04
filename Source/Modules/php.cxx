@@ -542,7 +542,6 @@ public:
 
     Preprocessor_define("SWIGPHP 1", 0);
     Preprocessor_define("SWIGPHP7 1", 0);
-    SWIG_typemap_lang("php");
     SWIG_config_file("php.swg");
     allow_overloading();
   }
@@ -2517,6 +2516,7 @@ public:
 
     /* emit the director method */
     if (status == SWIG_OK) {
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!Getattr(n, "defaultargs")) {
 	Replaceall(w->code, "$symname", symname);
 	Wrapper_print(w, f_directors);

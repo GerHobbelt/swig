@@ -301,8 +301,6 @@ public:
     // Add a symbol to the parser for conditional compilation
     Preprocessor_define("SWIGCSHARP 1", 0);
 
-    // Add typemap definitions
-    SWIG_typemap_lang("csharp");
     SWIG_config_file("csharp.swg");
 
     allow_overloading();
@@ -4440,6 +4438,7 @@ public:
       } else {
 	Replaceall(w->code, "$null", "");
       }
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!ignored_method)
 	Printv(director_delegate_callback, "\n", callback_def, callback_code, NIL);
       if (!Getattr(n, "defaultargs")) {

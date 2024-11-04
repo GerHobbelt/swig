@@ -205,7 +205,6 @@ public:
     Preprocessor_define("SWIGPERL 1", 0);
     // SWIGPERL5 is deprecated, and no longer documented.
     Preprocessor_define("SWIGPERL5 1", 0);
-    SWIG_typemap_lang("perl5");
     SWIG_config_file("perl5.swg");
     allow_overloading();
   }
@@ -2442,6 +2441,7 @@ public:
 
     /* emit the director method */
     if (status == SWIG_OK) {
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!Getattr(n, "defaultargs")) {
 	Replaceall(w->code, "$symname", symname);
 	Wrapper_print(w, f_directors);
@@ -2456,6 +2456,7 @@ public:
     DelWrapper(w);
     return status;
   }
+
   int classDirectorDisown(Node *n) {
     int rv;
     member_func = 1;
@@ -2468,6 +2469,7 @@ public:
     }
     return rv;
   }
+
   int classDirectorDestructor(Node *n) {
     /* TODO: it would be nice if this didn't have to copy the body of Language::classDirectorDestructor() */
     String *DirectorClassName = directorClassName(getCurrentClass());

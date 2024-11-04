@@ -132,7 +132,6 @@ public:
     SWIG_library_directory("octave");
     Preprocessor_define("SWIGOCTAVE 1", 0);
     SWIG_config_file("octave.swg");
-    SWIG_typemap_lang("octave");
     allow_overloading();
 
     // Octave API is C++, so output must be C++ compatible even when wrapping C code
@@ -1538,6 +1537,7 @@ public:
     }
     // emit the director method
     if (status == SWIG_OK) {
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!Getattr(n, "defaultargs")) {
         Replaceall(w->code, "$symname", symname);
         Wrapper_print(w, f_directors);

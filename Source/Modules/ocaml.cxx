@@ -128,9 +128,6 @@ public:
     // Add a symbol for this module
 
     Preprocessor_define("SWIGOCAML 1", 0);
-    // Set name of typemaps
-
-    SWIG_typemap_lang("ocaml");
 
     // Read in default typemaps */
     SWIG_config_file("ocaml.i");
@@ -1669,6 +1666,7 @@ public:
 
     /* emit the director method */
     if (status == SWIG_OK) {
+      Replaceall(w->code, "$isvoid", is_void ? "1" : "0");
       if (!Getattr(n, "defaultargs")) {
 	Replaceall(w->code, "$symname", symname);
 	Wrapper_print(w, f_directors);

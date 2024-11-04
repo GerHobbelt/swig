@@ -629,10 +629,6 @@ static int look(Scanner *s) {
 	s->start_line = s->line;
 	Clear(s->text);
 	state = 9;		/* A character constant */
-      } else if (c == '`') {
-	s->start_line = s->line;
-	Clear(s->text);
-	state = 900;
       }
 
       else if (c == '.')
@@ -1494,18 +1490,6 @@ static int look(Scanner *s) {
       }
       break;
 
-      /* Reverse string */
-    case 900:
-      if ((c = nextchar(s)) == EOF) {
-	Swig_error(cparse_file, cparse_start_line, "Unterminated character constant\n");
-	return SWIG_TOKEN_ERROR;
-      }
-      if (c == '`') {
-	Delitem(s->text, DOH_END);
-	return (SWIG_TOKEN_RSTRING);
-      }
-      break;
-
       /* An illegal character */
     default:
       return SWIG_TOKEN_ILLEGAL;
@@ -1554,21 +1538,19 @@ String *Scanner_text(Scanner *s) {
  * ----------------------------------------------------------------------------- */
 
 void Scanner_skip_line(Scanner *s) {
-  char c;
-  int done = 0;
   Clear(s->text);
   Setfile(s->text, Getfile(s->str));
   Setline(s->text, s->line);
-  while (!done) {
+  while (1) {
+    int c;
     if ((c = nextchar(s)) == EOF)
       return;
     if (c == '\\') {
       nextchar(s);
     } else if (c == '\n') {
-      done = 1;
+      return;
     }
   }
-  return;
 }
 
 /* -----------------------------------------------------------------------------
