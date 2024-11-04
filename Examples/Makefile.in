@@ -69,8 +69,7 @@ SWIG       = $(SWIG_LIB_SET) $(SWIGTOOL) $(SWIGEXE)
 
 LIBM       = @LIBM@
 LIBC       = @LIBC@
-LIBCRYPT   = @LIBCRYPT@
-SYSLIBS    = $(LIBM) $(LIBC) $(LIBCRYPT)
+SYSLIBS    = $(LIBM) $(LIBC)
 LIBPREFIX  =
 
 # RUNTOOL is for use with runtime tools, eg set it to valgrind
@@ -1324,12 +1323,12 @@ PYTHON_LIBOPTS = $(PYTHON_LINK) @LIBS@ $(TKINTER) $(SYSLIBS)
 python_static: $(SRCDIR_SRCS)
 	$(SWIG) -python -lembed.i $(SWIGOPT) -o $(ISRCS) $(INTERFACEPATH)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) @LINKFORSHARED@ $(ISRCS) $(SRCDIR_SRCS) $(INCLUDES) \
-	$(PYTHON_INCLUDE) $(LIBS) -L$(PYTHON_LIB) $(PYTHON_LIBOPTS) -o $(TARGET)
+	$(PYTHON_INCLUDE) $(LIBS) $(PYTHON_LIB) $(PYTHON_LIBOPTS) -o $(TARGET)
 
 python_static_cpp: $(SRCDIR_SRCS)
 	$(SWIG) -python -c++ -lembed.i $(SWIGOPT) -o $(ICXXSRCS) $(INTERFACEPATH)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(ICXXSRCS) $(SRCDIR_SRCS) $(SRCDIR_CXXSRCS) $(INCLUDES) \
-	$(PYTHON_INCLUDE) $(LIBS)  -L$(PYTHON_LIB) $(PYTHON_LIBOPTS) -o $(TARGET)
+	$(PYTHON_INCLUDE) $(LIBS) $(PYTHON_LIB) $(PYTHON_LIBOPTS) -o $(TARGET)
 
 # -----------------------------------------------------------------
 # Running a Python example

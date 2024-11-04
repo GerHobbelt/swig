@@ -7,6 +7,43 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.3.0 (in progress)
 ===========================
 
+2014-07-21: wsfulton
+	    [Python] Add missing slot for init in struct _specialization_cache
+            needed for python-3.13 builtin wrappers.
+
+2014-07-21: shadchin
+	    [Python] #2968 Add missing tp_versions_used slot needed for python-3.13.
+
+2014-07-19: olly
+	    -Wallkw now includes keywords for Javascript.
+
+2024-07-19: vadz
+	    [Javascript] #2940 Names of object properties can be keywords in
+	    Javascript so don't auto-rename them to have a leading underscore.
+
+2024-07-18: olly
+	    #1917 Stop removing `f` and `F` suffixes from float literals.
+	    This was resulting in incorrect generated C# and Java code.  For
+	    some cases such as `#define CONSTANT 1.0f` this was a regression
+	    introduced in 4.2.0 when we started more correctly wrapping these
+	    as `float` rather than `double`.
+
+2024-07-15: vadz
+            #2941 Suppress warning WARN_PARSE_USING_UNDEF for ignored using declarations.
+
+2024-07-03: wsfulton
+            #2860 Enhance Windows.html documentation for the popular Visual C++ compiler
+            recommending users to correctly set the __cplusplus macro in order to benefit
+            from modern standards based features that SWIG provides.
+
+2024-07-02: erezgeva
+	    [Python, Ruby] #2870 Change the thread safety options for the director code
+            that manages C++ director pointer ownership. Please define SWIG_THREADS to
+            turn on thread safety. For Python, this can also be done via the threads
+            module option or -threads. Implementation now includes a C++11 std::mutex option
+            as priority over WIN32 and pthread mutexes. See director_guard.swg for further
+            implementation details.
+
 2024-06-28: vadz
             #2935 Fix instantiation of specialized template where the primary template
             is a forward class template declaration.

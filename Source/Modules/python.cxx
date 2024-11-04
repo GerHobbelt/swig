@@ -808,6 +808,8 @@ public:
     if (Swig_directors_enabled()) {
       // Insert director runtime into the f_runtime file (make it occur before %header section)
       Swig_insert_file("director_common.swg", f_runtime);
+      Swig_insert_file("director_py_mutex.swg", f_runtime);
+      Swig_insert_file("director_guard.swg", f_runtime);
       Swig_insert_file("director.swg", f_runtime);
     }
 
@@ -4211,7 +4213,10 @@ public:
     printSlot(f, getSlot(), "tp_print");
     Printv(f, "#endif\n", NIL);
     Printv(f, "#if PY_VERSION_HEX >= 0x030c0000\n", NIL);
-    printSlot(f, getSlot(n, "feature:python:tp_watched"), "tp_watched", "char");
+    printSlot(f, getSlot(n, "feature:python:tp_watched"), "tp_watched", "unsigned char");
+    Printv(f, "#endif\n", NIL);
+    Printv(f, "#if PY_VERSION_HEX >= 0x030d00a4\n", NIL);
+    printSlot(f, getSlot(n, "feature:python:tp_versions_used"), "tp_versions_used", "uint16_t");
     Printv(f, "#endif\n", NIL);
 
     Printv(f, "#ifdef COUNT_ALLOCS\n", NIL);
@@ -4359,6 +4364,9 @@ public:
     printSlot(f, getSlot(n, "feature:python:getitem"), "getitem", "PyObject *");
     Printv(f, "#if PY_VERSION_HEX >= 0x030c0000\n", NIL);
     printSlot(f, getSlot(n, "feature:python:getitem_version"), "getitem_version", "uint32_t");
+    Printv(f, "#endif\n", NIL);
+    Printv(f, "#if PY_VERSION_HEX >= 0x030d0000\n", NIL);
+    printSlot(f, getSlot(n, "feature:python:init"), "init", "PyObject *");
     Printv(f, "#endif\n", NIL);
     Printf(f, "  }\n");
     Printv(f, "#endif\n", NIL);

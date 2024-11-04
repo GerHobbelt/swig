@@ -1,4 +1,4 @@
-name: CI
+name: linux
 
 on:
   push:
@@ -152,6 +152,10 @@ jobs:
           VER: '3.12'
           CSTD: gnu99
         - SWIGLANG: python
+          VER: '3.13'
+          CSTD: gnu99
+          continue-on-error: true # Python 3.13 is still in beta
+        - SWIGLANG: python
           PY2: 2
           SWIG_FEATURES: -builtin
         - SWIGLANG: python
@@ -197,7 +201,9 @@ jobs:
         - SWIGLANG: scilab
           os: ubuntu-22.04 # scilab 6.1.1
         - SWIGLANG: scilab
-          VER: '2023.0.0'
+          VER: '2023.1.0'
+        - SWIGLANG: scilab
+          VER: '2024.1.0'
         - SWIGLANG: tcl
         # c++11 testing
         - SWIGLANG: csharp

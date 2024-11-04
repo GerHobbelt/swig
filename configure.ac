@@ -122,7 +122,7 @@ then
 	case $host in
 	*-*-hp*) SO=.sl;;
 	*-*-darwin*) SO=.bundle;;
-	*-*-cygwin* | *-*-mingw*) SO=.dll;;
+	*-*-cygwin* | *-*-mingw* | *-*-msys*) SO=.dll;;
 	*) SO=.so;;
 	esac
 fi
@@ -137,7 +137,7 @@ if test -z "$LDSHARED"
 then
 	case $host in
 	*-*-aix*) LDSHARED="$CC -shared";;
-	*-*-cygwin* | *-*-mingw*)
+	*-*-cygwin* | *-*-mingw* | *-*-msys*)
             if test "$GCC" = yes; then
                 LDSHARED="\$(CC) -shared"
             else
@@ -203,7 +203,7 @@ then
              fi;;
         *-*-hp*) TRYLINKINGWITHCXX="CXXSHARED= \$(CXX) +z ";;
         *-*-darwin*) TRYLINKINGWITHCXX="CXXSHARED= \$(CXX) -bundle -undefined suppress -flat_namespace";;
-        *-*-cygwin* | *-*-mingw*)
+        *-*-cygwin* | *-*-mingw* | *-*-msys*)
             if test "$GCC" = yes; then
                 TRYLINKINGWITHCXX="CXXSHARED= \$(CXX) -shared "
             else
@@ -230,7 +230,7 @@ then
 		 fi;;
 	s390x*-*-*) CCSHARED="-fpic" ;;
 	s390*-*-*) CCSHARED="-fPIC" ;;
-	*-*-linux*) CCSHARED="-fpic";;
+	*-*-linux*) CCSHARED="-fPIC";;
 	*-*-freebsd* | *-*-openbsd*) CCSHARED="-fpic";;
 	*-*-netbsd*) CCSHARED="-fPIC";;
 	*-sco-sysv*) CCSHARED="-KPIC -dy -Bdynamic";;
@@ -460,17 +460,6 @@ esac
 AC_CHECK_LIB(dl, dlopen)	# Dynamic linking for SunOS/Solaris and SYSV
 AC_CHECK_LIB(dld, shl_load)	# Dynamic linking for HP-UX
 
-dnl The following three libraries (nsl,inet,socket) are needed on Sequent,
-dnl and must be checked for in this order since each library depends on the
-dnl preceding one.
-dnl
-dnl Most SVR4 platforms will need -lsocket and -lnsl.  However on SGI IRIX 5,
-dnl these exist but are broken, so we use AC_SEARCH_LIBS which will only try
-dnl the library if the function isn't already available without it.
-AC_SEARCH_LIBS(t_open, nsl) # SVR4
-AC_SEARCH_LIBS(gethostbyname, inet) # Sequent
-AC_SEARCH_LIBS(socket, socket) # SVR4 sockets
-
 # check for --with-libm=...
 AC_SUBST(LIBM)
 LIBM=-lm
@@ -480,8 +469,6 @@ then LIBM=$withval
 else AC_MSG_ERROR([proper usage is --with-libm=STRING])
 fi])
 AC_CHECK_LIB(ieee, main, [LIBM="-lieee $LIBM"])
-AC_CHECK_LIB(crypt,crypt, [LIBCRYPT="-lcrypt"])
-AC_SUBST(LIBCRYPT)
 
 # check for --with-libc=...
 AC_SUBST(LIBC)
@@ -566,7 +553,7 @@ else
 
 if test -z "$CSHARPCOMPILERBIN" ; then
   case $host in
-  *-*-cygwin* | *-*-mingw*)
+  *-*-cygwin* | *-*-mingw* | *-*-msys*)
     # prefer unified Mono mcs compiler (not to be confused with the ancient .NET 1 mcs) over older/alternative names.
     AC_CHECK_PROGS(CSHARPCOMPILER, csc mcs mono-csc gmcs cscc)
     if test -n "$CSHARPCOMPILER" && test "$CSHARPCOMPILER" = "csc" ; then
@@ -623,7 +610,7 @@ fi
 
 # Cygwin requires the Windows standard (Pascal) calling convention as it is a Windows executable and not a Cygwin built executable
 case $host in
-*-*-cygwin* | *-*-mingw*)
+*-*-cygwin* | *-*-mingw* | *-*-msys*)
     if test "$GCC" = yes; then
         CSHARPDYNAMICLINKING="$GCC_MNO_CYGWIN -mthreads -Wl,--add-stdcall-alias"
         CSHARPCFLAGS="$GCC_MNO_CYGWIN -mthreads"
@@ -639,7 +626,7 @@ esac
 
 # CSharp on Windows platforms including Cygwin doesn't use libname.dll, rather name.dll when loading dlls
 case $host in
-*-*-cygwin* | *-*-mingw*) CSHARPLIBRARYPREFIX="";;
+*-*-cygwin* | *-*-mingw* | *-*-msys*) CSHARPLIBRARYPREFIX="";;
 *)CSHARPLIBRARYPREFIX="lib";;
 esac
 
@@ -705,7 +692,7 @@ fi
 
 # Do not prefix library file names with "lib" on Windows.
 case $host in
-*-*-cygwin* | *-*-mingw*) DLIBPREFIX="";;
+*-*-cygwin* | *-*-mingw* | *-*-msys*) DLIBPREFIX="";;
 *)DLIBPREFIX="lib";;
 esac
 
@@ -1087,7 +1074,7 @@ esac
 
 # java.exe on Cygwin requires the Windows standard (Pascal) calling convention as it is a normal Windows executable and not a Cygwin built executable
 case $host in
-*-*-cygwin* | *-*-mingw*)
+*-*-cygwin* | *-*-mingw* | *-*-msys*)
     if test "$GCC" = yes; then
         JAVADYNAMICLINKING="$GCC_MNO_CYGWIN -mthreads -Wl,--add-stdcall-alias"
         JAVACFLAGS="$GCC_MNO_CYGWIN -mthreads"
@@ -1107,7 +1094,7 @@ esac
 
 # Java on Windows platforms including Cygwin doesn't use libname.dll, rather name.dll when loading dlls
 case $host in
-*-*-cygwin* | *-*-mingw*) JAVALIBRARYPREFIX="";;
+*-*-cygwin* | *-*-mingw* | *-*-msys*) JAVALIBRARYPREFIX="";;
 *)JAVALIBRARYPREFIX="lib";;
 esac
 
@@ -1934,10 +1921,10 @@ else
 
       AC_MSG_CHECKING(for Python 2.x library directory)
       if test -d $PYPREFIX/libs; then
-        PYLIB=$PYPREFIX/libs
+        PYLIB="$PYPREFIX/libs"
         PYLINKFILE=`ls $PYLIB/python*.lib | grep "python[[0-9]][[0-9]]\+\.lib"`
         if test -r "$PYLINKFILE"; then
-          PYLINK=-l`basename $PYLINKFILE | sed -e 's/\.lib$//'`
+          PYLINK=-l`basename "$PYLINKFILE" | sed -e 's/\.lib$//'`
         else
           PYLIB=
         fi
@@ -1980,7 +1967,7 @@ else
       AC_MSG_CHECKING(for Python 2.x library directory)
       dirs="$PYVERSION/config $PYVERSION/$PYLIBDIR python/$PYLIBDIR"
       for i in $dirs; do
-        if test -d $PYEPREFIX/$PYLIBDIR/$i; then
+        if test -d "$PYEPREFIX/$PYLIBDIR/$i"; then
           PYLIB="$PYEPREFIX/$PYLIBDIR/$i"
           break
         fi
@@ -1993,6 +1980,7 @@ else
       AC_MSG_RESULT(Not found)
     else
       AC_MSG_RESULT($PYLIB)
+      PYLIB="-L$PYLIB"
     fi
     AC_MSG_CHECKING(for Python 2.x library)
     if test -z "$PYLINK"; then
@@ -2004,12 +1992,12 @@ else
 
   # Cygwin (Windows) needs the library for dynamic linking
   case $host in
-  *-*-cygwin* | *-*-mingw*)
-    PYTHONDYNAMICLINKING="-L$PYLIB $PYLINK"
+  *-*-cygwin* | *-*-mingw* | *-*-msys*)
+    PYTHONDYNAMICLINKING="$PYLIB $PYLINK"
     DEFS="-DUSE_DL_IMPORT $DEFS"
     ;;
   *-*-aix*)
-    PYTHONDYNAMICLINKING="-L$PYLIB $PYLINK"
+    PYTHONDYNAMICLINKING="$PYLIB $PYLINK"
     ;;
   *)PYTHONDYNAMICLINKING="";;
   esac
@@ -2092,8 +2080,8 @@ else
       AC_MSG_RESULT($PY3INCLUDE)
 
       AC_MSG_CHECKING(for Python 3.x library directory)
-      if test -d $PY3PREFIX/libs; then
-        PY3LIB=$PY3PREFIX/libs
+      if test -d "$PY3PREFIX/libs"; then
+        PY3LIB="$PY3PREFIX/libs"
         PY3LINKFILE=`ls $PY3LIB/python*.lib | grep "python[[0-9]][[0-9]]\+\.lib"`
         if test -r "$PY3LINKFILE"; then
           PY3LINK=-l`basename $PY3LINKFILE | sed -e 's/\.lib$//'`
@@ -2105,6 +2093,7 @@ else
         AC_MSG_RESULT([Not found])
       else
         AC_MSG_RESULT($PY3LIB)
+        PY3LIB="-L$PY3LIB"
       fi
       AC_MSG_CHECKING([for Python 3.x library])
       if test -z "$PY3LINK"; then
@@ -2158,7 +2147,7 @@ else
       done
       if test -z "$PY3LIB"; then
         # Last resort
-        if test -d $PY3EPREFIX/$PY3LIBDIR; then
+        if test -d "$PY3EPREFIX/$PY3LIBDIR"; then
           PY3LIB="$PY3EPREFIX/$PY3LIBDIR"
         fi
       fi
@@ -2166,6 +2155,7 @@ else
         AC_MSG_RESULT([Not found])
       else
         AC_MSG_RESULT($PY3LIB)
+        PY3LIB="-L$PY3LIB"
       fi
 
       PY3LINK="-l$PY3VERSION"
@@ -2181,13 +2171,13 @@ else
 
   # Cygwin (Windows) needs the library for dynamic linking
   case $host in
-  *-*-cygwin* | *-*-mingw*)
+  *-*-cygwin* | *-*-mingw* | *-*-msys*)
     # PYTHON3DYNAMICLINKING ought to be replaced by $PY3CONFIG --ldflags
-    PYTHON3DYNAMICLINKING="-L$PY3LIB $PY3LINK"
+    PYTHON3DYNAMICLINKING="$PY3LIB $PY3LINK"
     DEFS="-DUSE_DL_IMPORT $DEFS"
     ;;
   *-*-aix*)
-    PYTHON3DYNAMICLINKING="-L$PY3LIB $PY3LINK"
+    PYTHON3DYNAMICLINKING="$PY3LIB $PY3LINK"
     ;;
   *)PYTHON3DYNAMICLINKING="";;
   esac
@@ -2767,7 +2757,7 @@ dnl although this is probably more rare, also be built as a Cygwin program.
 dnl Using "mixed" path like we do here allows the path to work in both cases.
 case $host in
   *-*-mingw* ) ABS_SRCDIR=`${srcdir}/Tools/convertpath -m $ABS_SRCDIR` ;;
-  *-*-cygwin* ) ABS_SRCDIR=`cygpath --mixed $ABS_SRCDIR` ;;
+  *-*-cygwin* | *-*-msys*) ABS_SRCDIR=`cygpath --mixed $ABS_SRCDIR` ;;
 esac
 
 # Root directory
@@ -2782,7 +2772,7 @@ case $host in
 esac
 
 case $host in
-*-*-cygwin* | *-*-mingw*)
+*-*-cygwin* | *-*-mingw* | *-*-msys*)
   # Extra files generated by some Windows compilers
   EXTRA_CLEAN="*.stackdump *.exp *.lib *.pdb *.ilk"
   ;;
