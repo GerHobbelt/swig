@@ -715,7 +715,7 @@ ifneq ($(SKIP_DOXYGEN_TEST_CASES),1)
 python_HAS_DOXYGEN := 1
 java_HAS_DOXYGEN := 1
 
-$(eval HAS_DOXYGEN := $($(LANGUAGE)_HAS_DOXYGEN))
+HAS_DOXYGEN := $($(LANGUAGE)_HAS_DOXYGEN)
 endif
 
 ifdef HAS_DOXYGEN
@@ -730,6 +730,7 @@ DOXYGEN_TEST_CASES += \
 	doxygen_ignore \
 	doxygen_misc_constructs \
 	doxygen_nested_class \
+	doxygen_overloads \
 	doxygen_parsing \
 	doxygen_parsing_enums \
 	doxygen_translate \

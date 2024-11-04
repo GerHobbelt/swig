@@ -111,7 +111,6 @@ echo ""
 
 dnl Some test cases require Boost
 AX_BOOST_BASE(,,,)
-AC_SUBST(BOOST_CPPFLAGS)
 
 dnl Info for building shared libraries ... in order to run the examples
 
@@ -219,20 +218,17 @@ then
 fi
 AC_MSG_RESULT($TRYLINKINGWITHCXX)
 # CCSHARED are the C *flags* used to create objects to go into a shared
-# library (module) -- this is only needed for a few systems
+# library (module).  Typically an option is needed to tell the compiler
+# to general Position-Independent Code (PIC).
 AC_MSG_CHECKING(CCSHARED)
 if test -z "$CCSHARED"
 then
 	case $host in
 	*-*-hp*) if test "$GCC" = yes
-		 then CCSHARED="-fpic"
+		 then CCSHARED="-fPIC"
 		 else CCSHARED="+z"
 		 fi;;
-	s390x*-*-*) CCSHARED="-fpic" ;;
-	s390*-*-*) CCSHARED="-fPIC" ;;
-	*-*-linux*) CCSHARED="-fPIC";;
-	*-*-freebsd* | *-*-openbsd*) CCSHARED="-fpic";;
-	*-*-netbsd*) CCSHARED="-fPIC";;
+	*-*-linux* | *-*-freebsd* | *-*-netbsd* | *-*-openbsd*) CCSHARED="-fPIC";;
 	*-sco-sysv*) CCSHARED="-KPIC -dy -Bdynamic";;
 	*-*-irix6*)  case $CC in
 		   *gcc*) CCSHARED="-shared";;
