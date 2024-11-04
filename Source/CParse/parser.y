@@ -420,7 +420,7 @@ static void add_symbols(Node *n) {
     String *symname = 0;
     String *old_prefix = 0;
     Symtab *old_scope = 0;
-    int isfriend = inclass && Checkattr(n, "storage", "friend");
+    int isfriend = inclass && Strstr(Getattr(n, "storage"), "friend") != NULL;
     int iscdecl = Cmp(nodeType(n),"cdecl") == 0;
     int only_csymbol = 0;
     
@@ -1670,7 +1670,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token <intvalue> TYPEDEF
 %token <type> TYPE_INT TYPE_UNSIGNED TYPE_SHORT TYPE_LONG TYPE_FLOAT TYPE_DOUBLE TYPE_CHAR TYPE_WCHAR TYPE_VOID TYPE_SIGNED TYPE_BOOL TYPE_COMPLEX TYPE_RAW TYPE_NON_ISO_INT8 TYPE_NON_ISO_INT16 TYPE_NON_ISO_INT32 TYPE_NON_ISO_INT64
 %token LPAREN RPAREN COMMA SEMI EXTERN LBRACE RBRACE PERIOD ELLIPSIS
-%token CONST_QUAL VOLATILE REGISTER STRUCT UNION EQUAL SIZEOF MODULE LBRACKET RBRACKET
+%token CONST_QUAL VOLATILE REGISTER STRUCT UNION EQUAL SIZEOF ALIGNOF MODULE LBRACKET RBRACKET
 %token BEGINFILE ENDOFFILE
 %token ILLEGAL CONSTANT
 %token RENAME NAMEWARN EXTEND PRAGMA FEATURE VARARGS
@@ -2905,7 +2905,7 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
                       if (GetFlag(nn, "instantiate")) {
 			Delattr(nn, "instantiate");
 			{
-			  int nnisclass = (Strcmp(Getattr(nn, "templatetype"), "class") == 0); /* if not a class template it is a function template */
+			  int nnisclass = (Strcmp(Getattr(nn, "templatetype"), "class") == 0); /* class template not a classforward nor function template */
 			  Parm *tparms = Getattr(nn, "templateparms");
 			  int specialized = !tparms; /* fully specialized (an explicit specialization) */
 			  String *tname = Copy(idcolonnt);
@@ -2959,6 +2959,13 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
 			    Setattr(templnode, "nested:outer", outer_class);
 			  }
                           add_symbols_copy(templnode);
+
+			  if (Equal(nodeType(templnode), "classforward")) {
+			    SWIG_WARN_NODE_BEGIN(templnode);
+			    /* A full template class definition is required in order to wrap a template class as a proxy class so this %template is ineffective. */
+			    Swig_warning(WARN_PARSE_TEMPLATE_FORWARD, cparse_file, cparse_line, "Template forward class instantiation '%s' with name '%s' is ineffective.\n", Swig_name_decl(templnode), Getattr(templnode, "sym:name"));
+			    SWIG_WARN_NODE_END(templnode);
+			  }
 
                           if (Strcmp(nodeType(templnode),"class") == 0) {
 
@@ -6190,8 +6197,8 @@ decltype       : DECLTYPE LPAREN <str>{
 		 $$ = get_raw_text_balanced('(', ')');
 	       }[expr] decltypeexpr {
 		 String *expr = $expr;
-		 if ($4) {
-		   $$ = $4;
+		 if ($decltypeexpr) {
+		   $$ = $decltypeexpr;
 		 } else {
 		   $$ = NewStringf("decltype%s", expr);
 		   /* expr includes parentheses but don't include them in the warning message. */
@@ -6606,33 +6613,35 @@ exprsimple     : exprnum
                     $$.type = T_STRING;
 		    $$.unary_arg_type = 0;
                }
-               | SIZEOF LPAREN type parameter_declarator RPAREN {
-		  SwigType_push($type,$parameter_declarator.type);
-		  $$.val = NewStringf("sizeof(%s)",SwigType_str($type,0));
-		  $$.type = T_ULONG;
-		  $$.unary_arg_type = 0;
-               }
-               | SIZEOF ELLIPSIS LPAREN type parameter_declarator RPAREN {
-		  SwigType_push($type,$parameter_declarator.type);
-		  $$.val = NewStringf("sizeof...(%s)",SwigType_str($type,0));
-		  $$.type = T_ULONG;
-		  $$.unary_arg_type = 0;
-               }
-	       /* We don't support all valid expressions here currently - e.g.
-		* sizeof(<unaryop> x) doesn't work - but those are unlikely to
-		* be seen in real code.
-		*
-		* Note: sizeof(x) is not handled here, but instead by the rule
-		* for sizeof(<type>) because it matches that syntactically.
+	       /* In sizeof(X) X can be a type or expression.  We don't actually
+		* need to parse X as the type of sizeof is always size_t (which
+		* SWIG handles as T_ULONG), so we just skip to the closing ')' and
+		* grab the skipped text to use in the value of the expression.
 		*/
-	       | SIZEOF LPAREN exprsimple[in] RPAREN {
-		  $$.val = NewStringf("sizeof(%s)", $in.val);
+	       | SIZEOF LPAREN {
+		  if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
+		  $$.val = NewStringf("sizeof%s", scanner_ccode);
+		  Clear(scanner_ccode);
+		  $$.type = T_ULONG;
+		  $$.unary_arg_type = 0;
+               }
+	       /* alignof(T) always has type size_t. */
+	       | ALIGNOF LPAREN {
+		  if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
+		  $$.val = NewStringf("alignof%s", scanner_ccode);
+		  Clear(scanner_ccode);
 		  $$.type = T_ULONG;
 		  $$.unary_arg_type = 0;
 	       }
+	       | SIZEOF ELLIPSIS LPAREN identifier RPAREN {
+		  $$.val = NewStringf("sizeof...(%s)", $identifier);
+		  $$.type = T_ULONG;
+		  $$.unary_arg_type = 0;
+               }
 	       /* `sizeof expr` without parentheses is valid for an expression,
-		* but not for a type.  This doesn't support `sizeof x` in
-		* addition to the case not supported above.
+		* but not for a type.  This doesn't support `sizeof x` (or
+		* `sizeof <unaryop> x` but that's unlikely to be seen in real
+		* code).
 		*/
 	       | SIZEOF exprsimple[in] {
 		  $$.val = NewStringf("sizeof(%s)", $in.val);
@@ -7037,7 +7046,7 @@ exprcompound   : expr[lhs] PLUS expr[rhs] {
 		  * cases such as (6)+7 which get parsed using this rule then
 		  * the rule for a C-style cast.
 		  */
-		 $$.unary_arg_type = $2.type;
+		 $$.unary_arg_type = $in.type;
 	       }
                | NOT expr[in] {
 		 $$.val = NewStringf("~%s",$in.val);
@@ -7084,7 +7093,7 @@ variadic_opt  : ELLIPSIS {
 inherit        : raw_inherit
                ;
 
-raw_inherit     : COLON { inherit_list = 1; } base_list { $$ = $3; inherit_list = 0; }
+raw_inherit     : COLON { inherit_list = 1; } base_list { $$ = $base_list; inherit_list = 0; }
                 | %empty { $$ = 0; }
                 ;
 
@@ -7116,37 +7125,37 @@ base_list      : base_specifier {
 
 base_specifier : opt_virtual <intvalue>{
 		 $$ = cparse_line;
-	       } idcolon variadic_opt {
+	       }[line] idcolon variadic_opt {
 		 $$ = NewHash();
-		 Setfile($$,cparse_file);
-		 Setline($$,$2);
-		 Setattr($$,"name",$3);
-		 Setfile($3,cparse_file);
-		 Setline($3,$2);
+		 Setfile($$, cparse_file);
+		 Setline($$, $line);
+		 Setattr($$, "name", $idcolon);
+		 Setfile($idcolon, cparse_file);
+		 Setline($idcolon, $line);
                  if (last_cpptype && (Strcmp(last_cpptype,"struct") != 0)) {
 		   Setattr($$,"access","private");
-		   Swig_warning(WARN_PARSE_NO_ACCESS, Getfile($$), Getline($$), "No access specifier given for base class '%s' (ignored).\n", SwigType_namestr($3));
+		   Swig_warning(WARN_PARSE_NO_ACCESS, Getfile($$), Getline($$), "No access specifier given for base class '%s' (ignored).\n", SwigType_namestr($idcolon));
                  } else {
 		   Setattr($$,"access","public");
 		 }
-		 if ($4) {
+		 if ($variadic_opt) {
 		   SwigType_add_variadic(Getattr($$, "name"));
 		 }
                }
 	       | opt_virtual access_specifier <intvalue>{
 		 $$ = cparse_line;
-	       } opt_virtual idcolon variadic_opt {
+	       }[line] opt_virtual idcolon variadic_opt {
 		 $$ = NewHash();
-		 Setfile($$,cparse_file);
-		 Setline($$,$3);
-		 Setattr($$,"name",$5);
-		 Setfile($5,cparse_file);
-		 Setline($5,$3);
-		 Setattr($$,"access",$2);
-	         if (Strcmp($2,"public") != 0) {
-		   Swig_warning(WARN_PARSE_PRIVATE_INHERIT, Getfile($$), Getline($$), "%s inheritance from base '%s' (ignored).\n", $2, SwigType_namestr($5));
+		 Setfile($$, cparse_file);
+		 Setline($$, $line);
+		 Setattr($$, "name", $idcolon);
+		 Setfile($idcolon, cparse_file);
+		 Setline($idcolon, $line);
+		 Setattr($$, "access", $access_specifier);
+		 if (Strcmp($access_specifier, "public") != 0) {
+		   Swig_warning(WARN_PARSE_PRIVATE_INHERIT, Getfile($$), Getline($$), "%s inheritance from base '%s' (ignored).\n", $access_specifier, SwigType_namestr($idcolon));
 		 }
-		 if ($6) {
+		 if ($variadic_opt) {
 		   SwigType_add_variadic(Getattr($$, "name"));
 		 }
                }
@@ -7469,7 +7478,7 @@ idtemplate    : identifier {
 
 idtemplatetemplate : idtemplate
 	      | TEMPLATE identifier less_valparms_greater {
-		$$ = NewStringf("%s%s", $2, $3);
+		$$ = NewStringf("%s%s", $identifier, $less_valparms_greater);
 	      }
               ;
 
