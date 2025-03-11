@@ -82,7 +82,7 @@ SWIG C# works equally well on non-Microsoft operating systems such as Linux, Sol
 <p>
 SWIG 3 and later requires .NET 2.0 at a minimum.
 There are some minor exceptions, where the minimum required is .NET 4.0.
-This is when using the <tt>std::complex</tt> and <tt>std::list</tt> STL containers.
+This is when using the <tt>std::complex</tt>, <tt>std::set</tt> and <tt>std::unordered_set</tt> STL containers.
 </p>
 
 <p>
@@ -2340,6 +2340,16 @@ Don't be surprised that if the resulting output gives strange results after the 
 <pre>
 wheel size: 10
 wheel size: 0
+</pre>
+</div>
+
+<p>
+or even a memory access violation error such as
+</p>
+
+<div class="shell">
+<pre>
+Fatal error. System.AccessViolationException: Attempted to read or write protected memory. This is often an indication that other memory is corrupt.
 </pre>
 </div>
 
