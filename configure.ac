@@ -1921,7 +1921,7 @@ else
     fi
   fi
 
-  if test $PYVER -eq 1 -o $PYVER -eq 2; then
+  if test $PYVER -eq 2; then
     AC_MSG_CHECKING(for Python 2.x prefix)
     PYPREFIX=`($PYTHON -c "import sys; sys.stdout.write(sys.prefix)") 2>/dev/null`
     AC_MSG_RESULT($PYPREFIX)
@@ -2722,13 +2722,6 @@ if (test -z "$PYINCLUDE" || test -z "$PYLINK") &&
     SKIP_PYTHON="1"
 fi
 AC_SUBST(SKIP_PYTHON)
-
-
-SKIP_PYTHON3=
-if test -z "$PY3INCLUDE" || test -z "$PY3LINK" ; then
-    SKIP_PYTHON3="1"
-fi
-AC_SUBST(SKIP_PYTHON3)
 
 
 SKIP_R=
