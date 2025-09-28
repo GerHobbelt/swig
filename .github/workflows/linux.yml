@@ -130,8 +130,16 @@ jobs:
           VER: '3.13'
           CSTD: gnu99
         - SWIGLANG: python
+          VER: '3.13-dbg'
+          CSTD: gnu99
+        - SWIGLANG: python
           VER: '3.13t' # no-gil testing
           CSTD: gnu99
+        - SWIGLANG: python
+          VER: '3.14'
+          PY_ABI_VER: '3.14'
+          CSTD: gnu99
+          continue-on-error: true
         - SWIGLANG: python
           VER: '3.14'
           CSTD: gnu99
@@ -195,6 +203,8 @@ jobs:
           VER: '2023.1.0'
         - SWIGLANG: scilab
           VER: '2024.1.0'
+        - SWIGLANG: scilab
+          VER: '2025.1.0'
         - SWIGLANG: tcl
         # c++11 testing
         - SWIGLANG: csharp

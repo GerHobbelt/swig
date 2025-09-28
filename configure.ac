@@ -863,7 +863,7 @@ else
         AC_MSG_RESULT([$guile_bindir])
         GUILE="$guile_bindir/guile"
       fi
-      if ! test -f "$GUILE" ; then
+      if test ! -f "$GUILE" ; then
         GUILE=
         AC_PATH_PROG(GUILE, guile)
       fi
@@ -1254,28 +1254,24 @@ else
 
   JSCOREVERSION=
 
-  if test -z "$JSCOREINCDIR" -a -n "$JSCORELIB"; then
-    AC_MSG_ERROR([Either both or none of --with-jcoreinc --with-jscorelib should be specified])
-  elif test -n "$JSCOREINCDIR" -a -z "$JSCORELIB"; then
-    AC_MSG_ERROR([Either both or none of --with-jcoreinc --with-jscorelib should be specified])
-  elif test -z "$JSCOREINCDIR" -a -z "$JSCORELIB"; then
-    if test -z "$JSCORELIB" -a -n "$PKG_CONFIG "; then
+  if test -z "$JSCOREINCDIR" && test -z "$JSCORELIB"; then
+    if test -n "$PKG_CONFIG"; then
       AC_MSG_CHECKING(for JavaScriptCore/Webkit)
-      if $PKG_CONFIG  javascriptcoregtk-4.1 2>/dev/null ; then
-        JSCORELIB=`$PKG_CONFIG  --libs javascriptcoregtk-4.1`
-        JSCOREINC=`$PKG_CONFIG  --cflags-only-I javascriptcoregtk-4.1`
-        JSCOREVERSION=`$PKG_CONFIG  --modversion javascriptcoregtk-4.1`
-      elif $PKG_CONFIG  javascriptcoregtk-4.0 2>/dev/null ; then
-        JSCORELIB=`$PKG_CONFIG  --libs javascriptcoregtk-4.0`
-        JSCOREINC=`$PKG_CONFIG  --cflags-only-I javascriptcoregtk-4.0`
-        JSCOREVERSION=`$PKG_CONFIG  --modversion javascriptcoregtk-4.0`
-      elif $PKG_CONFIG  javascriptcoregtk-3.0 2>/dev/null ; then
-        JSCORELIB=`$PKG_CONFIG  --libs javascriptcoregtk-3.0`
-        JSCOREINC=`$PKG_CONFIG  --cflags-only-I javascriptcoregtk-3.0`
-        JSCOREVERSION=`$PKG_CONFIG  --modversion javascriptcoregtk-3.0`
-      elif $PKG_CONFIG  javascriptcoregtk-1.0 2>/dev/null ; then
-        JSCORELIB=`$PKG_CONFIG  --libs javascriptcoregtk-1.0`
-        JSCOREVERSION=`$PKG_CONFIG  --modversion javascriptcoregtk-1.0`
+      if $PKG_CONFIG javascriptcoregtk-4.1 2>/dev/null ; then
+        JSCORELIB=`$PKG_CONFIG --libs javascriptcoregtk-4.1`
+        JSCOREINC=`$PKG_CONFIG --cflags-only-I javascriptcoregtk-4.1`
+        JSCOREVERSION=`$PKG_CONFIG --modversion javascriptcoregtk-4.1`
+      elif $PKG_CONFIG javascriptcoregtk-4.0 2>/dev/null ; then
+        JSCORELIB=`$PKG_CONFIG --libs javascriptcoregtk-4.0`
+        JSCOREINC=`$PKG_CONFIG --cflags-only-I javascriptcoregtk-4.0`
+        JSCOREVERSION=`$PKG_CONFIG --modversion javascriptcoregtk-4.0`
+      elif $PKG_CONFIG javascriptcoregtk-3.0 2>/dev/null ; then
+        JSCORELIB=`$PKG_CONFIG --libs javascriptcoregtk-3.0`
+        JSCOREINC=`$PKG_CONFIG --cflags-only-I javascriptcoregtk-3.0`
+        JSCOREVERSION=`$PKG_CONFIG --modversion javascriptcoregtk-3.0`
+      elif $PKG_CONFIG javascriptcoregtk-1.0 2>/dev/null ; then
+        JSCORELIB=`$PKG_CONFIG --libs javascriptcoregtk-1.0`
+        JSCOREVERSION=`$PKG_CONFIG --modversion javascriptcoregtk-1.0`
       fi
       if test -z "$JSCORELIB"; then
         AC_MSG_RESULT(not found)
@@ -1290,6 +1286,8 @@ else
         JSCENABLED=1
       fi
     fi
+  elif test -z "$JSCOREINCDIR" || test -z "$JSCORELIB"; then
+    AC_MSG_ERROR([Either both or none of --with-jcoreinc --with-jscorelib should be specified])
   else
     AC_MSG_CHECKING(for JavaScriptCore/Webkit include flags)
     JSCOREINC=-I\"$JSCOREINCDIR\"
@@ -1656,7 +1654,7 @@ if test -n "$OCTAVE"; then
    save_CXXFLAGS="${CXXFLAGS}"
    CXXFLAGS="-Werror -O0"
    AC_COMPILE_IFELSE([
-      AC_LANG_PROGRAM([],[])
+      AC_LANG_PROGRAM
    ],[
       OCTAVE_CXXFLAGS="${OCTAVE_CXXFLAGS} -O0"
    ])
@@ -1906,7 +1904,7 @@ else
     PYEPREFIX=`($PYTHON -c "import sys; sys.stdout.write(sys.exec_prefix)") 2>/dev/null`
     AC_MSG_RESULT($PYEPREFIX)
 
-    if test x"$PYOSNAME" = x"nt" -a x"$PYSEPARATOR" = x"\\"; then
+    if test x"$PYOSNAME" = x"nt" && test x"$PYSEPARATOR" = x"\\"; then
       # Windows installations are quite different to posix installations (MinGW path separator is a forward slash)
       PYPREFIX=`echo "$PYPREFIX" | sed -e 's,\\\\,/,g'` # Forward slashes are easier to use and even work on Windows most of the time
       PYTHON_SO=.pyd
@@ -2027,7 +2025,7 @@ else
     PYVER=0
   fi
   if test "x$PY3BIN" = xyes; then
-    if test x"$PYOSNAME" = x"nt" -a x"$PYSEPARATOR" = x"\\" -a $PYVER -ge 3; then
+    if test x"$PYOSNAME" = x"nt" && test x"$PYSEPARATOR" = x"\\" && test $PYVER -ge 3; then
       PYTHON3="$PYTHON"
     else
       for py_ver in 3 3.15 3.14 3.13 3.12 3.11 3.10 3.9 3.8 3.7 3.6 3.5 3.4 3.3 ""; do
@@ -2069,7 +2067,7 @@ else
     PYSEPARATOR=`($PYTHON3 -c "import sys, os; sys.stdout.write(os.sep)") 2>/dev/null`
     AC_MSG_RESULT($PYSEPARATOR)
 
-    if test x"$PY3OSNAME" = x"nt" -a x"$PYSEPARATOR" = x"\\"; then
+    if test x"$PY3OSNAME" = x"nt" && test x"$PYSEPARATOR" = x"\\"; then
       # Windows installations are quite different to posix installations
       # There is no python-config to use
       AC_MSG_CHECKING(for Python 3.x prefix)
@@ -2321,7 +2319,7 @@ if test -n "$RUBY"; then
 
 		if test "$rb_libruby" != ""; then
 			for i in $dirs; do
-				if (test -r $i/$rb_libruby;) then
+				if test -r "$i/$rb_libruby"; then
 					RUBYLIB="$i"
 					break
 				fi
@@ -2425,8 +2423,8 @@ else
         dirs="$SCI/include $SCI/../../include"
       elif test -d "$headers"; then
         dirs="$headers"
-      elif test -n "$PKG_CONFIG "; then
-        dirs=`$PKG_CONFIG  scilab --cflags-only-I | sed -e 's/-I//g'`
+      elif test -n "$PKG_CONFIG"; then
+        dirs=`$PKG_CONFIG scilab --cflags-only-I | sed -e 's/-I//g'`
       else
         dirs="/usr/include"
       fi
@@ -2652,7 +2650,7 @@ AC_SUBST(SKIP_JAVA)
 
 
 SKIP_JAVASCRIPT=
-if test -z "$JAVASCRIPT" || ( test -z "$NODEJS" && test -z "$JSCENABLED" && test -z "$JSV8ENABLED" && test -z "$JSNAPIENABLED" ) ; then
+if test -z "$JAVASCRIPT" || { test -z "$NODEJS" && test -z "$JSCENABLED" && test -z "$JSV8ENABLED" && test -z "$JSNAPIENABLED" ; } ; then
     SKIP_JAVASCRIPT="1"
 fi
 AC_SUBST(SKIP_JAVASCRIPT)
@@ -2695,8 +2693,8 @@ AC_SUBST(SKIP_PERL5)
 
 
 SKIP_PYTHON=
-if (test -z "$PYINCLUDE" || test -z "$PYLINK") &&
-   (test -z "$PY3INCLUDE" || test -z "$PY3LINK") ; then
+if { test -z "$PYINCLUDE" || test -z "$PYLINK" ; } &&
+   { test -z "$PY3INCLUDE" || test -z "$PY3LINK" ; } ; then
     SKIP_PYTHON="1"
 fi
 AC_SUBST(SKIP_PYTHON)
