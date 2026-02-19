@@ -1668,12 +1668,8 @@ if test -n "$OCTAVE"; then
    for var in OCTLIBDIR; do
      OCTAVE_LDFLAGS="${OCTAVE_LDFLAGS} "-L`${mkoctfile} -p ${var}`
    done
-   for var in RDYNAMIC_FLAG RLD_FLAG OCTAVE_LIBS LIBS; do
-     # RLD_FLAG gives "mkoctfile: unknown variable 'RLD_FLAG'" on stderr
-     # with Octave 7.3 so just discard stderr here.  Apparently RLD_FLAG has
-     # reported an empty value since somewhere between 3.4.3 and 3.6.1 so
-     # can be removed below once we require Octave 4.
-     OCTAVE_LDFLAGS="${OCTAVE_LDFLAGS} "`${mkoctfile} -p ${var} 2>/dev/null`
+   for var in RDYNAMIC_FLAG OCTAVE_LIBS LIBS; do
+     OCTAVE_LDFLAGS="${OCTAVE_LDFLAGS} "`${mkoctfile} -p ${var}`
    done
    AC_MSG_RESULT([$OCTAVE_LDFLAGS])
 
@@ -2076,9 +2072,7 @@ else
 
       AC_MSG_CHECKING([for Python 3.x version])
 
-      # Need to do this hack since autoconf replaces __file__ with the name of the configure file
-      filehack="file__"
-      PY3VERSION=`($PYTHON3 -c "import string,operator,os.path; print(operator.getitem(os.path.split(operator.getitem(os.path.split(string.__$filehack),0)),1))") 2>/dev/null`
+      PY3VERSION=`($PYTHON3 -c "import sys;print('python%d.%d' % (sys.version_info.major, sys.version_info.minor))") 2>/dev/null`
       AC_MSG_RESULT($PY3VERSION)
 
       # Find the directory for libraries this is necessary to deal with
@@ -2192,6 +2186,13 @@ else
   AC_SUBST(PY3LIB)
   AC_SUBST(PY3LINK)
   AC_SUBST(PYTHON3DYNAMICLINKING)
+fi
+
+if test -n "$PYTHON3"; then
+  AC_MSG_CHECKING([for python 3.x three digit version])
+  PY_VER_3_DIGIT=`($PYTHON3 -c "import sys; print('%d%02d' % (sys.version_info.major, sys.version_info.minor))") 2>/dev/null`
+  AC_MSG_RESULT($PY_VER_3_DIGIT)
+  AC_SUBST(PY_VER_3_DIGIT)
 fi
 
 if test -n "$PYINCLUDE" || test -n "$PY3INCLUDE" ; then
