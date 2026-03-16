@@ -3,24 +3,45 @@ name: macos
 on:
   push:
     paths-ignore:
+      - '.github/workflows/linux.yml'
+      - '.github/workflows/windows.yml'
+      - '.github/workflows/cmake.yml'
       - 'CHANGES*'
       - 'Doc/**'
       - 'Tools/CI-linux-*'
       - 'Tools/GHA-linux-*'
-      - 'appveyor.yml'
   pull_request:
     branches: master
     paths-ignore:
+      - '.github/workflows/linux.yml'
+      - '.github/workflows/windows.yml'
+      - '.github/workflows/cmake.yml'
       - 'CHANGES*'
       - 'Doc/**'
       - 'Tools/CI-linux-*'
       - 'Tools/GHA-linux-*'
-      - 'appveyor.yml'
 
 permissions:
   contents: read
 
 jobs:
+  # Code format checks, see https://github.com/marketplace/actions/clang-format-github-action
+  # The clang-format version used is slightly different for each OS workflow file
+  # This job gates the main build job so must succeed before the main build job is run
+  clang-format:
+    runs-on: ubuntu-latest
+    name: clang-format 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          show-progress: false
+      - name: Check with clang-format
+        uses: RafikFarhad/clang-format-github-action@v5.1
+        with:
+          sources: "Source/*/*.c,Source/*/*.cxx,Source/*/*.h"
+          style: file
+
   build:
 
     # When continue-on-error is true for an individual build,
@@ -41,6 +62,8 @@ jobs:
       ${{ matrix.CSTD }}
       ${{ matrix.os }}
       ${{ matrix.continue-on-error && '(can fail)' }}
+
+    needs: [clang-format]
 
     strategy:
       matrix:
@@ -210,7 +233,7 @@ jobs:
           if test -n "$CSTD"; then
             echo "CSTD=$CSTD" >> $GITHUB_ENV
             CFLAGS+=" -std=$CSTD"
-            echo "Use C++ standard $CSTD"
+            echo "Use C standard $CSTD"
           fi
           if test -n "$CFLAGS"; then
             echo "CFLAGS=$CFLAGS" >> $GITHUB_ENV
@@ -295,7 +318,7 @@ jobs:
             cflags="$($GITHUB_WORKSPACE/Tools/testflags.py --language $SWIGLANG --cflags --std=$CSTD --compiler=$CC_NAME)"
             cxxflags="$($GITHUB_WORKSPACE/Tools/testflags.py --language $SWIGLANG --cxxflags --std=$CPPSTD --compiler=$CC_NAME)"
             # Include for the boost headers
-            cxxflags=" -I$BOOST_INC"
+            cxxflags+=" -I$BOOST_INC"
             make check-$SWIGLANG-version
             make check-$SWIGLANG-enabled
             make $SWIGJOBS check-$SWIGLANG-examples CFLAGS="$cflags" CXXFLAGS="$cxxflags"
