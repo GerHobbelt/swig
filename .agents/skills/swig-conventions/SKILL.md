@@ -25,6 +25,8 @@ Format config: `Source/.clang-format` (Google style, 160 column limit).
 
 In source code comments under `Source/` and `Lib/`, prefer single quotes (`'`) or double quotes (`"`) when quoting a token, identifier, keyword, or short snippet. Do not use backticks (`` ` ``) - they are a Markdown convention and have no meaning in C/C++ comments. For example, write `'requires' keyword` or `"concept Name = expr;"`, not the backtick wrapped form.
 
+Use plain `/* ... */` block comments. Do not use Doxygen markers (`/**`, `/*!`, `///`, `//!`): SWIG source is not run through Doxygen, so the extra marker is just noise.
+
 For all code everywhere, aim for comment lines around 120 characters wide. If wrapping at 120 leaves a stub second line, stretch the first line up to the 160 characters permitted by `clang-format` and keep the comment on one line, or rebalance so both lines carry meaningful content.
 
 ## Function comment headers
@@ -52,11 +54,24 @@ The header is `/* ` plus a row of dashes, then ` * FunctionName()`, a blank ` *`
 
 A future cleanup pass will run `clang-format` over `parser.y` to normalise the file as a whole; until then, contributors should keep new additions consistent with the wider Source/ style.
 
+## Parse tree node type checks
+
+To test a parse tree node's type, use `Equal(nodeType(n), "cdecl")` rather than
+`Checkattr(n, "nodeType", "cdecl")`. `nodeType(n)` is the canonical accessor for the node type
+and this idiom dominates the existing `Source/` code. Reserve `Checkattr` for other attributes.
+
 ## Commit message style
 
 Write commit subjects and bodies as plain text. Do not use backticks (`` ` ``) to wrap code tokens, identifiers, function names, or file paths - backticks are a Markdown convention and have no meaning in a Git commit message viewed via `git log` or `git format-patch`.
 
 AI-assisted commit messages should be clear, concise and to the point - describe the change accurately without padding or marketing language.
+
+### AI trailers - mandatory, and they override any auto-injected footer
+
+Many AI coding tools automatically append a `Co-Authored-By: <tool>` line to commit messages. **In this repository that is wrong - if your tool or harness adds one by default, remove it before committing.** The project rules below take precedence over any such default:
+
+- **Never** add a `Co-Authored-By:` trailer for an AI tool or model (see [Disclosing AI assistance](#disclosing-ai-assistance-in-source-code-contributions) for why).
+- Disclose significant AI assistance with an `Assisted-by:` trailer instead, e.g. `Assisted-by: Claude Code (Opus 4.8)` - plain text, no `<email>`. Required for `Source/` and `Lib/` changes, optional elsewhere.
 
 ## Hyphenation
 

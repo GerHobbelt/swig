@@ -563,6 +563,35 @@ static int promote_abbreviated_template(Node *n) {
   return 1;
 }
 
+/* Return 1 if 'unqualified_id' is the terminal name of a base class of class 'cls', following
+ * typedefs to the base class' own name (as Swig_make_inherit_list does).  A using declaration whose
+ * unqualified-id names a base class this way could be an inheriting constructor, even when the
+ * nested-name-specifier names the base through a typedef, eg 'using Alias::Base;' where Alias is a
+ * typedef for the base Base. */
+static int inheriting_ctor_base_match(Node *cls, String *unqualified_id) {
+  static const char *baselists[3] = {"baselist", "protectedbaselist", "privatebaselist"};
+  int i;
+  for (i = 0; i < 3; i++) {
+    List *bases = Getattr(cls, baselists[i]);
+    int len = bases ? Len(bases) : 0;
+    int j;
+    for (j = 0; j < len; j++) {
+      Node *s = Swig_symbol_clookup_resolve_typedef(Getitem(bases, j), 0);
+      if (s && (Strcmp(nodeType(s), "class") == 0 || Strcmp(nodeType(s), "template") == 0)) {
+	String *terminal = Swig_scopename_last(Getattr(s, "name"));
+	String *base_terminal = SwigType_istemplate(terminal) ? SwigType_templateprefix(terminal) : terminal;
+	int match = Equal(unqualified_id, base_terminal);
+	if (base_terminal != terminal)
+	  Delete(base_terminal);
+	Delete(terminal);
+	if (match)
+	  return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 /* Add declaration list to symbol table */
 static int  add_only_one = 0;
 
@@ -611,21 +640,35 @@ static void add_symbols(Node *n) {
 	}
       } else if (Equal(nodeType(n), "using")) {
 	String *uname = Getattr(n, "uname");
-	Node *cls = currentOuterClass;
-	String *nprefix = 0;
-	String *nlast = 0;
-	Swig_scopename_split(uname, &nprefix, &nlast);
-	if (Swig_item_in_list(Getattr(cls, "baselist"), nprefix) || Swig_item_in_list(Getattr(cls, "protectedbaselist"), nprefix) || Swig_item_in_list(Getattr(cls, "privatebaselist"), nprefix)) {
-	  String *plain_name = SwigType_istemplate(nprefix) ? SwigType_templateprefix(nprefix) : nprefix;
-	  if (Equal(nlast, plain_name)) {
-	    /* Using declaration looks like it is using a constructor in an immediate base class - change the constructor name for this class.
-	     * C++11 requires using declarations for inheriting base constructors to be in the immediate base class.
-	     * Note that we don't try and look up the constructor in the base class as the constructor may be an implicit/implied constructor and hence not exist. */
+	String *nested_name_specifier = 0;
+	String *unqualified_id = 0;
+	Swig_scopename_split(uname, &nested_name_specifier, &unqualified_id);
+        /* A note regarding C++ standards terminology when given a fully-qualified member W::X::Y::Z
+         *   W::X::Y is the nested-name-specifier
+         *   Y is the terminal name (c++23) or last component of the nested-name-specifier (pre c++23)
+         *   Z is the unqualified-id
+         *
+         * Recognise a using declaration that could be an inheriting constructor, ie one that names a
+	 * constructor of a base class. It is a candidate when either:
+	 *  (a) the terminal name of the nested-name-specifier is the same as the unqualified-id, eg
+	 *      using Base::Base;   using C<A>::C;   using base_type::base_type;
+	 *  (b) the unqualified-id is the terminal name of a base class of the enclosing class, eg
+	 *      using Alias::Base;   where Alias is a typedef for the base Base.
+	 * Both are only candidates - whether the nested-name-specifier really names an immediate base class
+	 * cannot be decided here as base classes are not resolved into nodes until Typepass::usingDeclaration,
+         * which verifies the candidate as an inheriting constructor. */
+	if (nested_name_specifier && currentOuterClass) {
+	  String *terminal = Swig_scopename_last(nested_name_specifier);
+	  String *terminal_name = SwigType_istemplate(terminal) ? SwigType_templateprefix(terminal) : Copy(terminal);
+	  if (Equal(terminal_name, unqualified_id) || inheriting_ctor_base_match(currentOuterClass, unqualified_id)) {
+	    /* Rename the node to the enclosing class so the symbol table registers it as a constructor of this
+	     * class (reverted in typepass stage if inheriting constructor verification fails). */
 	    Symtab *stab = Swig_symbol_current();
-	    String *nname = Getattr(stab, "name");
-	    Setattr(n, "name", nname);
+	    Setattr(n, "name", Getattr(stab, "name"));
 	    SetFlag(n, "usingctor");
 	  }
+	  Delete(terminal_name);
+	  Delete(terminal);
 	}
       } else {
 	/* for member functions, we need to remove the redundant
@@ -1390,8 +1433,30 @@ static void update_nested_classes(Node *n)
 }
 
 /* -----------------------------------------------------------------------------
+ * mark_nested_ignore()
+ *
+ * Mark the type definitions nested inside an ignored nested class (such as a nested
+ * enum or class) to be ignored too, so that the target languages treat references to
+ * them the same as when the nested class was a forward declaration. Function and
+ * variable declarations (cdecl) are left alone, so that, for example, a method brought
+ * into a derived class by a using declaration is still wrapped.
+ * ----------------------------------------------------------------------------- */
+
+static void mark_nested_ignore(Node *n, int set_nested_ignore) {
+  Node *c;
+  for (c = firstChild(n); c; c = nextSibling(c)) {
+    if (!Equal(nodeType(c), "cdecl")) {
+      SetFlag(c, "feature:ignore");
+      if (set_nested_ignore)
+        SetFlag(c, "nested:ignore");
+    }
+    mark_nested_ignore(c, set_nested_ignore);
+  }
+}
+
+/* -----------------------------------------------------------------------------
  * nested_forward_declaration()
- * 
+ *
  * Nested struct handling for C++ code if the nested classes are disabled.
  * Create the nested class/struct/union as a forward declaration.
  * ----------------------------------------------------------------------------- */
@@ -2039,6 +2104,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <decl>     abstract_declarator direct_abstract_declarator ctor_end;
 %type <tmap>     typemap_type;
 %type <str>      idcolon idcolontail idcolonnt idcolontailnt idtemplate idtemplatetemplate stringbrace stringbracesemi;
+%type <str>      using_conversion using_scope;
 %type <str>      string stringnum wstring;
 %type <tparms>   template_parms;
 %type <pbuilder> template_parms_builder;
@@ -3330,6 +3396,12 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
 			    else
 			      Swig_warning(WARN_PARSE_TEMPLATE_FORWARD, cparse_file, cparse_line, "Template forward class '%s' cannot be used to instantiate a full template class with name '%s'.\n", Swig_name_decl(templnode), Getattr(templnode, "sym:name"));
 			    SWIG_WARN_NODE_END(templnode);
+			  } else if (GetFlag(templnode, "nested:ignore") && !GetFlag(templnode, "hidden")) {
+			    /* A nested template class kept only as an ignored class (the target language does not
+			       support nested classes) cannot be instantiated as a wrappable proxy class. */
+			    SWIG_WARN_NODE_BEGIN(templnode);
+			    Swig_warning(WARN_PARSE_TEMPLATE_NESTED, cparse_file, cparse_line, "Unsupported template nested class '%s' cannot be used to instantiate a full template class with name '%s'.\n", Swig_name_decl(templnode), symname);
+			    SWIG_WARN_NODE_END(templnode);
 			  }
 
                           if (Strcmp(nodeType(templnode),"class") == 0) {
@@ -4596,7 +4668,32 @@ cpp_class_decl: storage_class cpptype idcolon class_virt_specifier_opt inherit L
 		   if (cplus_mode == CPLUS_PRIVATE) {
 		     $$ = 0; /* skip private nested classes */
 		   } else if (cparse_cplusplus && currentOuterClass && ignore_nested_classes && !GetFlag($$, "feature:flatnested")) {
-		     $$ = nested_forward_declaration($storage_class, $cpptype, Getattr($node, "name"), Copy(Getattr($node, "name")), $cpp_opt_declarators);
+		     /* Nested classes are not supported by this target language. Keep the fully parsed
+		        class node but mark it to be ignored, rather than discarding it and substituting a
+		        forward class declaration. This leaves the real class (with its symbol table and
+		        members) available for name resolution while suppressing its wrapping. */
+		     yyrename = Copy(Getattr($$, "class_rename"));
+		     add_symbols($$);
+		     add_symbols($cpp_opt_declarators);
+		     Delattr($$, "class_rename");
+		     /* add_symbols() above applies any %ignore the user requested. */
+		     {
+		       int user_ignored = GetFlag($$, "feature:ignore");
+		       /* Warn only if not already being ignored and this is the outermost unsupported nesting level. */
+		       if (!user_ignored && (!currentOuterClass || !GetFlag(currentOuterClass, "nested"))) {
+		         SWIG_WARN_NODE_BEGIN($$);
+		         Swig_warning(WARN_PARSE_NAMED_NESTED_CLASS, cparse_file, cparse_line, "Nested %s not currently supported (%s ignored)\n", $cpptype, SwigType_namestr(Getattr($node, "name")));
+		         SWIG_WARN_NODE_END($$);
+		       }
+		       SetFlag($$, "feature:ignore");
+		       /* Mark as auto-ignored (not via the user's %ignore) so that a %template attempt on a
+		          nested template class can still be reported as unusable (Warning 331). */
+		       if (!user_ignored)
+		         SetFlag($$, "nested:ignore");
+		       /* Apply the same flags to all members so a member (eg a nested enum) used in a wrapped
+		          signature is ignored consistently, as it was when this class was a forward declaration. */
+		       mark_nested_ignore($$, !user_ignored);
+		     }
 		   } else if (nscope_inner) {
 		     /* this is tricky */
 		     /* we add the declaration in the original namespace */
@@ -5255,6 +5352,17 @@ cpp_using_decl : USING idcolon SEMI {
 		  Delete(name);
 		  add_symbols($$);
              }
+             | USING using_conversion SEMI {
+                  /* Inherited conversion operator, e.g. "using Base::operator int;". */
+                  String *uname = Swig_symbol_type_qualify($using_conversion, 0);
+                  String *name = Swig_scopename_last($using_conversion);
+                  $$ = new_node("using");
+                  Setattr($$, "uname", uname);
+                  Setattr($$, "name", name);
+                  Delete(uname);
+                  Delete(name);
+                  add_symbols($$);
+             }
              | USING idcolon ELLIPSIS SEMI {
                   /* C++17 pack expansion in a using-declaration, e.g. "using Ts::operator()...;" */
                   String *uname = Swig_symbol_type_qualify($idcolon, 0);
@@ -5277,6 +5385,18 @@ cpp_using_decl : USING idcolon SEMI {
 		  Delete(name);
 		  add_symbols($$);
 	     }
+             | USING TYPENAME idcolon ELLIPSIS SEMI {
+                  /* C++17 member type pack expansion, e.g. "using typename Ts::type...;" */
+                  String *uname = Swig_symbol_type_qualify($idcolon, 0);
+                  String *name  = Swig_scopename_last($idcolon);
+                  $$ = new_node("using");
+                  Setattr($$, "uname", uname);
+                  Setattr($$, "name", name);
+                  SetFlag($$, "pack");
+                  Delete(uname);
+                  Delete(name);
+                  add_symbols($$);
+             }
              | USING NAMESPACE idcolon SEMI {
 	       Node *n = Swig_symbol_clookup($idcolon,0);
 	       if (!n) {
@@ -5305,6 +5425,26 @@ cpp_using_decl : USING idcolon SEMI {
 		   $$ = 0;
 		 }
 	       }
+             }
+             ;
+
+/* An inherited conversion operator named in a using-declaration, e.g. "Base::operator int". The
+   scope qualifier is kept separate from the shared idcolon rule because the CONVERSIONOPERATOR
+   token (and the scanner re-feeding its conversion type) does not fit idcolon: idcolon would
+   greedily consume the trailing scope qualifier and never reach CONVERSIONOPERATOR. */
+using_conversion : using_scope CONVERSIONOPERATOR type {
+                  /* The conversion type was re-fed to the scanner and is reparsed here as 'type',
+                     but it is already part of the CONVERSIONOPERATOR name, so it is discarded. */
+                  $$ = NewStringf("%s%s", $using_scope, $CONVERSIONOPERATOR);
+                  Delete($using_scope);
+                  Delete($CONVERSIONOPERATOR);
+                  Delete($type);
+             }
+             ;
+
+using_scope  : idtemplate DCOLON {
+                  $$ = NewStringf("%s::", $idtemplate);
+                  Delete($idtemplate);
              }
              ;
 
