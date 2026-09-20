@@ -223,7 +223,7 @@ SwigPyStaticVar_TypeOnce(void) {
       PyObject_GenericGetAttr,                  /* tp_getattro */
       0,                                        /* tp_setattro */
       0,                                        /* tp_as_buffer */
-      Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_GC|Py_TPFLAGS_HAVE_CLASS, /* tp_flags */
+      Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_GC|Py_TPFLAGS_BASETYPE, /* tp_flags */
       SwigPyStaticVar_doc,                      /* tp_doc */
       SwigPyStaticVar_traverse,                 /* tp_traverse */
       0,                                        /* tp_clear */
@@ -296,11 +296,16 @@ SwigPyStaticVar_TypeOnce(void) {
     SWIG_RUNTIME_MODULE ".SwigPyStaticVar",
     sizeof(PyGetSetDescrObject),
     0,
-    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_GC|Py_TPFLAGS_HAVE_CLASS,
+    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_GC|Py_TPFLAGS_BASETYPE,
     slots
   };
-  PyObject *pytype = PyType_FromSpec(&spec);
   PyObject *runtime_data_module = SWIG_runtime_data_module();
+  PyObject *pytype = PyObject_GetAttrString(runtime_data_module, "SwigPyStaticVar");
+  if (pytype) {
+    return (PyTypeObject *)pytype;
+  }
+  PyErr_Clear();
+  pytype = PyType_FromSpec(&spec);
   if (pytype && PyModule_AddObject(runtime_data_module, "SwigPyStaticVar", pytype) == 0)
     SWIG_Py_INCREF(pytype);
   return (PyTypeObject *)pytype;
@@ -344,7 +349,7 @@ SwigPyObjectType_TypeOnce(void) {
       0,                                        /* tp_getattro */
       SwigPyObjectType_setattro,                /* tp_setattro */
       0,                                        /* tp_as_buffer */
-      Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_CLASS, /* tp_flags */
+      Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,   /* tp_flags */
       SwigPyObjectType_doc,                     /* tp_doc */
       0,                                        /* tp_traverse */
       0,                                        /* tp_clear */
@@ -414,11 +419,16 @@ SwigPyObjectType_TypeOnce(void) {
     SWIG_RUNTIME_MODULE ".SwigPyObjectType",
     (int)PyType_Type.tp_basicsize,
     0,
-    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_CLASS,
+    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,
     slots
   };
-  PyObject *pytype = PyType_FromSpec(&spec);
   PyObject *runtime_data_module = SWIG_runtime_data_module();
+  PyObject *pytype = PyObject_GetAttrString(runtime_data_module, "SwigPyObjectType");
+  if (pytype) {
+    return (PyTypeObject *)pytype;
+  }
+  PyErr_Clear();
+  pytype = PyType_FromSpec(&spec);
   if (pytype && PyModule_AddObject(runtime_data_module, "SwigPyObjectType", pytype) == 0)
     SWIG_Py_INCREF(pytype);
   return (PyTypeObject *)pytype;
@@ -439,7 +449,7 @@ SwigPyStaticVar_new_getset(PyTypeObject *type, PyGetSetDef *getset) {
   assert(descr);
   SWIG_Py_XINCREF((PyObject *)type);
   PyDescr_TYPE(descr) = type;
-  PyDescr_NAME(descr) = PyString_InternFromString(getset->name);
+  PyDescr_NAME(descr) = PyUnicode_InternFromString(getset->name);
   descr->d_getset = getset;
   if (PyDescr_NAME(descr) == NULL) {
     SWIG_Py_DECREF((PyObject *)descr);
@@ -520,7 +530,7 @@ SwigPyBuiltin_destructor_closure(SwigPyWrapperFunction wrapper, const char *wrap
     PyErr_Fetch(&type, &value, &traceback);
     o = wrapper(a, NULL);
     if (!o) {
-      PyObject *deallocname = PyString_FromString(wrappername);
+      PyObject *deallocname = PyUnicode_FromString(wrappername);
       PyErr_WriteUnraisable(deallocname);
       SWIG_Py_DECREF(deallocname);
     }
@@ -635,8 +645,8 @@ SwigPyBuiltin_ssizessizeargfunc_closure(SwigPyWrapperFunction wrapper, PyObject 
   PyObject *tuple, *result;
   tuple = PyTuple_New(2);
   assert(tuple);
-  PyTuple_SET_ITEM(tuple, 0, _PyLong_FromSsize_t(b));
-  PyTuple_SET_ITEM(tuple, 1, _PyLong_FromSsize_t(c));
+  PyTuple_SET_ITEM(tuple, 0, PyLong_FromSsize_t(b));
+  PyTuple_SET_ITEM(tuple, 1, PyLong_FromSsize_t(c));
   result = wrapper(a, tuple);
   SWIG_Py_DECREF(tuple);
   return result;
@@ -653,8 +663,8 @@ SwigPyBuiltin_ssizessizeobjargproc_closure(SwigPyWrapperFunction wrapper, PyObje
   int result;
   tuple = PyTuple_New(d ? 3 : 2);
   assert(tuple);
-  PyTuple_SET_ITEM(tuple, 0, _PyLong_FromSsize_t(b));
-  PyTuple_SET_ITEM(tuple, 1, _PyLong_FromSsize_t(c));
+  PyTuple_SET_ITEM(tuple, 0, PyLong_FromSsize_t(b));
+  PyTuple_SET_ITEM(tuple, 1, PyLong_FromSsize_t(c));
   if (d) {
     SWIG_Py_INCREF(d);
     PyTuple_SET_ITEM(tuple, 2, d);
@@ -676,7 +686,7 @@ SwigPyBuiltin_funpack_ssizeargfunc_closure(SwigPyWrapperFunction wrapper, PyObje
   PyObject *tuple, *result;
   tuple = PyTuple_New(1);
   assert(tuple);
-  PyTuple_SET_ITEM(tuple, 0, _PyLong_FromSsize_t(b));
+  PyTuple_SET_ITEM(tuple, 0, PyLong_FromSsize_t(b));
   result = wrapper(a, tuple);
   SWIG_Py_DECREF(tuple);
   return result;
@@ -690,7 +700,7 @@ wrapper##_ssizeargfunc_closure(PyObject *a, Py_ssize_t b) {		\
 SWIGINTERN PyObject *
 SwigPyBuiltin_ssizeargfunc_closure(SwigPyWrapperFunction wrapper, PyObject *a, Py_ssize_t b) {
   PyObject *arg, *result;
-  arg = _PyLong_FromSsize_t(b);
+  arg = PyLong_FromSsize_t(b);
   result = wrapper(a, arg);
   SWIG_Py_DECREF(arg);
   return result;
@@ -707,7 +717,7 @@ SwigPyBuiltin_ssizeobjargproc_closure(SwigPyWrapperFunction wrapper, PyObject *a
   int result;
   tuple = PyTuple_New(2);
   assert(tuple);
-  PyTuple_SET_ITEM(tuple, 0, _PyLong_FromSsize_t(b));
+  PyTuple_SET_ITEM(tuple, 0, PyLong_FromSsize_t(b));
   if (c) {
     SWIG_Py_INCREF(c);
     PyTuple_SET_ITEM(tuple, 1, c);

@@ -7,6 +7,167 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.5.0 (in progress)
 ===========================
 
+2026-07-22: jschueller
+            [Python] #3315 Fix "metaclass conflict" TypeError raised when importing a
+            module built with -builtin that defines a class deriving from base classes
+            wrapped in different SWIG extension modules. Each module used to create its
+            own SwigPyObjectType metaclass instance, so a class combining bases from two
+            modules had two unrelated metaclasses. The SwigPyObjectType metaclass (and
+            the SwigPyStaticVar type) are now shared across all modules via the runtime
+            data module. This only affected Python 3.12 and later, since heap types were
+            enabled by default in SWIG 4.4.0.
+
+2026-07-15: wsfulton
+            [R] %rename of an enum (including an enum class) is now honoured for the
+            generated R enum name. Previously the C++ enum name was always used for the
+            name passed to defineEnumeration, so a renamed enum was registered under its
+            original name while its enum item names used the renamed name. The enum
+            class returned by the generated accessor functions (via enumFromInteger /
+            enumToInteger) now also uses the renamed name, matching the other target
+            languages.
+
+2026-07-14: wsfulton
+            [Go] %rename of an enum (including an enum class) is now honoured for the
+            generated Go type name. Previously the C++ enum name was always used, so a
+            renamed enum produced a Go type with the original name while its enum item
+            constants used the renamed name.
+
+            A side effect is that a typedef named enum now uses the typedef name for the
+            Go type instead of the enum name used previously, matching the enum item names
+            used by all the other target languages. The previous behaviour can be restored
+            by renaming the typedef back to the enum name, for example:
+
+              %rename(Foo) FooEnum;
+              typedef enum Foo { FooA, FooB } FooEnum;
+
+            makes the generated Go type Foo again.
+
+            This also fixes the Go type name generated for a forward declared enum,
+            which previously incorrectly embedded the mangled "enum" keyword, for example
+            Enum_SS_ForwardEnum1 instead of ForwardEnum1.
+
+2026-07-14: wsfulton
+            [R] %rename of an enum item is now honoured in the generated R code. The
+            enum item name passed to defineEnumeration previously used the original
+            C++ name, so %rename had no effect on the name used with enumToInteger and
+            enumFromInteger even though the underlying wrapper function was renamed.
+
+2026-07-14: jschueller
+            [R] #2984 Fix scoped enums (enum class) that are not declared within a class.
+            The enum name was added twice to the enum item's wrapper function name,
+            resulting in a mismatch with the name used in the generated R code.
+
+2026-07-12: wsfulton
+            [Lua] #3493 Directors now work with Lua 5.1 and LuaJIT, which do not have the
+            Lua 5.2 uservalue functions ('lua_getuservalue'/'lua_setuservalue') used
+            to store the table of Lua method overrides for a director object. The
+            userdata environment functions that uservalues replaced
+            ('lua_getfenv'/'lua_setfenv') are used instead when wrapping for Lua 5.1.
+
+2026-07-12: wsfulton
+            [Lua] #3493 Restore support for Lua 5.1 and LuaJIT (which implements the
+            Lua 5.1 API) for non-director wrapping. Reverts part of #3394 which
+            dropped Lua 5.1 support.
+
+2026-07-11: wsfulton
+            Fixed a protected or private nested class deriving from a class used
+            elsewhere in the wrapped API producing a runtime upcast helper function
+            that referenced the nested class by its inaccessible qualified name in
+            non-member scope, a C++ compile error ('class ... is protected within
+            this context'). No target language ever wraps a non-public nested class,
+            so it is now never registered for this. Affects any target language
+            using SWIG's generic runtime type table (for example Perl, Python,
+            Ruby, Tcl, Lua), most visibly since the "Keep unsupported nested
+            classes as ignored classes, not forward declarations" change.
+
+2026-07-11: wsfulton
+            [Tcl] Add support for Tcl 9. Fix
+              error: implicit declaration of function Tcl_NewSizeIntObj.
+
+2026-07-09: wsfulton
+            [Guile, JavaScript, Lua, OCaml, Octave, Perl, Python, R, Ruby, Scilab, Tcl]
+            Added 'char *&' (a reference to a char pointer) string typemaps to the
+            target languages that were missing them. A 'char *&' function
+            argument, return value or variable - and, via const reference stripping,
+            a 'char *const&' - is now marshalled as a string in every target
+            language rather than as an opaque pointer; previously only C#, D, Go,
+            Java and PHP did so. The common char_strings test now also has a runme
+            for every target language, all exercising the same set of functions, so
+            there is complete char *& typemap coverage and testing across all
+            supported languages.
+
+2026-07-09: wsfulton
+            [Guile] #3290 Fixed 'invalid conversion from const void* to void*' C++
+            compilation error when wrapping a function taking a 'const char *'
+            argument hidden behind a typedef, such as 'typedef const char *MyString;'.
+
+2026-07-09: wsfulton
+            [Go] Fixed the wrapper generated for a function or variable returning
+            'char *&' (a reference to a char pointer), which previously returned a
+            corrupted string because the returned pointer was not dereferenced.
+
+2026-07-09: jschueller, olly, wsfulton
+            [Go] #3290 Fixed 'invalid conversion' C++ compilation errors in the
+            generated wrapper when a function takes a 'const char *' argument
+            hidden behind a typedef, such as 'typedef const char *MyString;'.
+
+2026-07-08: vadz
+            #3403 Fixed a crash the doxygen parser triggered by a structural
+            comment such as @name/@{ followed by a blank line with no documentation
+            attached.
+
+2026-07-06: wsfulton
+            [Python] Removed the Python 2 compatibility macros that were kept in
+            the generated code (pyhead.swg) only for user typemaps. A typemap
+            still using any of these must be updated to call the Python 3 C API
+            directly (the Python 3 equivalent is shown in brackets).
+
+            Python 2 C API macros removed: PyClass_Check (PyObject_IsInstance),
+            PyInt_Check (PyLong_Check), PyInt_AsLong (PyLong_AsLong),
+            PyInt_FromLong (PyLong_FromLong), PyInt_FromSize_t
+            (PyLong_FromSize_t), PyString_Check (PyBytes_Check),
+            PyString_FromString (PyUnicode_FromString), PyString_Format
+            (PyUnicode_Format), PyString_AsString (PyBytes_AsString),
+            PyString_Size (PyBytes_Size), PyString_InternFromString
+            (PyUnicode_InternFromString), Py_TPFLAGS_HAVE_CLASS
+            (Py_TPFLAGS_BASETYPE) and _PyLong_FromSsize_t (PyLong_FromSsize_t).
+
+            SWIG string helper macros removed: SWIG_Python_str_FromFormat
+            (PyUnicode_FromFormat) and SWIG_Python_str_FromChar
+            (PyUnicode_FromString).
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2026-07-05: jschueller
+            [Python] #2424 Updated the Python identifier warnings to match
+            Python 3. The list of Python keywords and built-in names that SWIG
+            warns about (a wrapped symbol clashing with one is renamed) now
+            tracks Python 3: the Python 3 keywords and built-ins are added,
+            including nonlocal, True, False, None and print and exec (no longer
+            statements), and the Python 2 only names such as apply, buffer, cmp,
+            file, long, unicode and xrange are dropped.
+
+2026-07-05: jschueller, wsfulton
+            [Python] #3201 Python 2 is no longer supported. SWIG now
+            targets Python 3.5 and later only, and the Python 2 code paths have
+            been removed from the generated wrappers and the SWIG library.
+
+            Macros that only ever affected Python 2 have been removed and now
+            have no effect if defined:
+              - SWIG_PYTHON_2_UNICODE - in Python 2 this let a unicode object be
+                accepted where a char* or std::string was expected; in Python 3
+                str is already unicode so it is redundant.
+              - SWIG_PYTHON_STRICT_UNICODE_WCHAR - in Python 2 this forced
+                wchar_t* and std::wstring to accept only unicode and reject byte
+                strings; that is already the only behavior in Python 3.
+            SWIG_PYTHON_STRICT_BYTE_CHAR is unchanged and still supported.
+
+            The deprecated embed.i library, which only ever worked with Python 2,
+            has been removed, along with the python_static example build targets
+            that used it.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
 2026-07-05: wsfulton
 	    [Octave] Fix Octave detection in configure with newer versions of
 	    Octave.  Newer Octave changed the format of the 'octave --version'

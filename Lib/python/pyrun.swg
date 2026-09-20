@@ -86,7 +86,7 @@ SWIG_Python_SetErrorMsg(PyObject *errtype, const char *msg) {
 
 SWIGINTERN void
 SwigPyBuiltin_AddPublicSymbol(PyObject *seq, const char *key) {
-  PyObject *s = PyString_InternFromString(key);
+  PyObject *s = PyUnicode_InternFromString(key);
   PyList_Append(seq, s);
   SWIG_Py_DECREF(s);
 }
@@ -546,7 +546,7 @@ SwigPyClientData_New(PyObject* obj)
     data->klass = obj;
     SWIG_Py_INCREF(data->klass);
     /* the newraw method and newargs arguments used to create a new raw instance */
-    if (PyClass_Check(obj)) {
+    if (PyObject_IsInstance(obj, (PyObject *)&PyType_Type)) {
       data->newraw = 0;
       SWIG_Py_INCREF(obj);
       data->newargs = obj;
@@ -640,7 +640,7 @@ SwigPyObject_format(const char* fmt, SwigPyObject *v)
     if (val) {
       PyObject *ofmt;
       PyTuple_SET_ITEM(args, 0, val);
-      ofmt = SWIG_Python_str_FromChar(fmt);
+      ofmt = PyUnicode_FromString(fmt);
       if (ofmt) {
         res = PyUnicode_Format(ofmt,args);
         SWIG_Py_DECREF(ofmt);
@@ -667,7 +667,7 @@ SWIGRUNTIME PyObject *
 SwigPyObject_repr(SwigPyObject *v)
 {
   const char *name = SWIG_TypePrettyName(v->ty);
-  PyObject *repr = SWIG_Python_str_FromFormat("<Swig Object of type '%s' at %p>", (name ? name : "unknown"), (void *)v);
+  PyObject *repr = PyUnicode_FromFormat("<Swig Object of type '%s' at %p>", (name ? name : "unknown"), (void *)v);
   if (repr && v->next) {
     PyObject *nrep = SwigPyObject_repr((SwigPyObject *)v->next);
     if (nrep) {
@@ -703,7 +703,7 @@ SwigPyObject_compare(PyObject *v, PyObject *w)
 
 SWIGRUNTIMEINLINE int SwigPyObject_Check(PyObject *);
 
-/* Added for Python 3.x, would it also be useful for Python 2.x? */
+/* Rich comparison support */
 SWIGRUNTIME PyObject*
 SwigPyObject_richcompare(PyObject *v, PyObject *w, int op)
 {
@@ -916,7 +916,7 @@ SwigPyObject_TypeOnce(void) {
     (unaryfunc)0,  /*nb_negative*/
     (unaryfunc)0,  /*nb_positive*/
     (unaryfunc)0,  /*nb_absolute*/
-    (inquiry)0,    /*nb_nonzero*/
+    (inquiry)0,    /*nb_bool*/
     0,		   /*nb_invert*/
     0,		   /*nb_lshift*/
     0,		   /*nb_rshift*/
@@ -1094,9 +1094,9 @@ SwigPyPacked_repr(SwigPyPacked *v)
 {
   char result[SWIG_BUFFER_SIZE];
   if (SWIG_PackDataName(result, v->pack, v->size, 0, sizeof(result))) {
-    return SWIG_Python_str_FromFormat("<Swig Packed at %s%s>", result, v->ty->name);
+    return PyUnicode_FromFormat("<Swig Packed at %s%s>", result, v->ty->name);
   } else {
-    return SWIG_Python_str_FromFormat("<Swig Packed %s>", v->ty->name);
+    return PyUnicode_FromFormat("<Swig Packed %s>", v->ty->name);
   }  
 }
 
@@ -1105,10 +1105,10 @@ SwigPyPacked_str(SwigPyPacked *v)
 {
   char result[SWIG_BUFFER_SIZE];
   if (SWIG_PackDataName(result, v->pack, v->size, 0, sizeof(result))){
-    return SWIG_Python_str_FromFormat("%s%s", result, v->ty->name);
+    return PyUnicode_FromFormat("%s%s", result, v->ty->name);
   } else {
-    return SWIG_Python_str_FromChar(v->ty->name);
-  }  
+    return PyUnicode_FromString(v->ty->name);
+  }
 }
 
 SWIGRUNTIME int
@@ -1312,14 +1312,9 @@ SWIGRUNTIME PyObject *
 SWIG_This(void)
 {
   if (Swig_This_global == NULL)
-    Swig_This_global = SWIG_Python_str_FromChar("this");
+    Swig_This_global = PyUnicode_FromString("this");
   return Swig_This_global;
 }
-
-/* #define SWIG_PYTHON_SLOW_GETSET_THIS */
-
-/* TODO: I don't know how to implement the fast getset in Python 3 right now */
-#define SWIG_PYTHON_SLOW_GETSET_THIS 
 
 /* Returns a borrowed reference to the 'this' object */
 SWIGRUNTIME SwigPyObject *
@@ -1349,29 +1344,6 @@ SWIG_Python_GetSwigThis(PyObject *pyobj)
 
   obj = 0;
 
-#if !defined(SWIG_PYTHON_SLOW_GETSET_THIS)
-  if (PyInstance_Check(pyobj)) {
-    obj = _PyInstance_Lookup(pyobj, SWIG_This());      
-  } else {
-    PyObject **dictptr = _PyObject_GetDictPtr(pyobj);
-    if (dictptr != NULL) {
-      PyObject *dict = *dictptr;
-      obj = dict ? PyDict_GetItem(dict, SWIG_This()) : 0;
-    } else {
-      if (PyWeakref_CheckProxy(pyobj)) {
-        PyObject *wobj = PyWeakref_GET_OBJECT(pyobj);
-	return wobj ? SWIG_Python_GetSwigThis(wobj) : 0;
-      }
-      obj = PyObject_GetAttr(pyobj, SWIG_This());
-      if (obj) {
-	SWIG_Py_DECREF(obj);
-      } else {
-	if (PyErr_Occurred()) PyErr_Clear();
-	return 0;
-      }
-    }
-  }
-#else
   obj = PyObject_GetAttr(pyobj, SWIG_This());
   if (obj) {
     SWIG_Py_DECREF(obj);
@@ -1379,7 +1351,6 @@ SWIG_Python_GetSwigThis(PyObject *pyobj)
     if (PyErr_Occurred()) PyErr_Clear();
     return 0;
   }
-#endif
   if (obj && !SwigPyObject_Check(obj)) {
     /* a PyObject is called 'this', try to get the 'real this'
        SwigPyObject from it */ 
@@ -1588,27 +1559,10 @@ SWIG_Python_NewShadowInstance(SwigPyClientData *data, PyObject *swig_this)
   if (newraw) {
     inst = PyObject_Call(newraw, data->newargs, NULL);
     if (inst) {
-#if !defined(SWIG_PYTHON_SLOW_GETSET_THIS)
-      PyObject **dictptr = _PyObject_GetDictPtr(inst);
-      if (dictptr != NULL) {
-        PyObject *dict = *dictptr;
-        if (dict == NULL) {
-          dict = PyDict_New();
-          *dictptr = dict;
-        }
-        if (dict) {
-          PyDict_SetItem(dict, SWIG_This(), swig_this);
-        } else{
-          SWIG_Py_DECREF(inst);
-          inst = 0;
-        }
-      }
-#else
       if (PyObject_SetAttr(inst, SWIG_This(), swig_this) == -1) {
         SWIG_Py_DECREF(inst);
         inst = 0;
       }
-#endif
     }
   } else {
     PyObject *empty_args = PyTuple_New(0);
@@ -1640,21 +1594,6 @@ SWIG_Python_NewShadowInstance(SwigPyClientData *data, PyObject *swig_this)
 SWIGRUNTIME int
 SWIG_Python_SetSwigThis(PyObject *inst, PyObject *swig_this)
 {
-#if !defined(SWIG_PYTHON_SLOW_GETSET_THIS)
-  PyObject **dictptr = _PyObject_GetDictPtr(inst);
-  if (dictptr != NULL) {
-    PyObject *dict = *dictptr;
-    if (dict == NULL) {
-      dict = PyDict_New();
-      *dictptr = dict;
-    }
-    if (dict) {
-      return PyDict_SetItem(dict, SWIG_This(), swig_this);
-    } else{
-      return -1;
-    }
-  }
-#endif
   return PyObject_SetAttr(inst, SWIG_This(), swig_this);
 } 
 
@@ -1938,13 +1877,13 @@ SWIG_Python_NonDynamicSetAttr(PyObject *obj, PyObject *name, PyObject *value) {
   int res = -1;
 
 # ifdef Py_USING_UNICODE
-  if (PyString_Check(name)) {
-    name = PyUnicode_Decode(PyString_AsString(name), PyString_Size(name), NULL, NULL);
+  if (PyBytes_Check(name)) {
+    name = PyUnicode_Decode(PyBytes_AsString(name), PyBytes_Size(name), NULL, NULL);
     if (!name)
       return -1;
   } else if (!PyUnicode_Check(name))
 # else
-  if (!PyString_Check(name))
+  if (!PyBytes_Check(name))
 # endif
   {
     PyObject *tpname = SWIG_PyType_GetFullyQualifiedName(Py_TYPE(name));
@@ -1965,7 +1904,7 @@ SWIG_Python_NonDynamicSetAttr(PyObject *obj, PyObject *name, PyObject *value) {
   if (descr != NULL)
     f = Py_TYPE(descr)->tp_descr_set;
   if (!f) {
-    if (PyString_Check(name)) {
+    if (PyBytes_Check(name)) {
       encoded_name = name;
       SWIG_Py_INCREF(name);
     } else {

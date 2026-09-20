@@ -755,8 +755,8 @@ public:
 
       if (!builtin) {
         /* Need builtins to qualify names like Exception that might also be
-           defined in this module (try both Python 3 and Python 2 names) */
-        Printv(f_shadow, "try:\n", "    import builtins as __builtin__\n", "except ImportError:\n", "    import __builtin__\n", NULL);
+           defined in this module */
+        Printv(f_shadow, "import builtins as __builtin__\n", NULL);
       }
 
       if (!builtin && fastproxy) {
@@ -800,15 +800,6 @@ public:
                "        else:\n",
                "            raise AttributeError(\"You cannot add class attributes to %s\" % cls)\n",
                "    return set_class_attr\n\n",
-               NIL);
-
-        Printv(f_shadow,
-               "\n",
-               "def _swig_add_metaclass(metaclass):\n",
-               "    \"\"\"Class decorator for adding a metaclass to a SWIG wrapped class - a slimmed down version of six.add_metaclass\"\"\"\n",
-               "    def wrapper(cls):\n",
-               "        return metaclass(cls.__name__, cls.__bases__, cls.__dict__.copy())\n",
-               "    return wrapper\n\n",
                NIL);
 
         Printv(f_shadow,
@@ -1351,7 +1342,6 @@ public:
      *     generated).
      *
      * see:
-     * https://docs.python.org/2/reference/lexical_analysis.html#blank-lines
      * https://docs.python.org/3/reference/lexical_analysis.html#blank-lines
      */
     for (si = First(clist); si.item; si = Next(si), ++py_line) {
@@ -2115,7 +2105,7 @@ public:
     // So now we are certain that we are indeed dealing with an integer
     // that has a representation as long given by value.
 
-    // Restrict to guaranteed supported range in Python, see maxint docs: https://docs.python.org/2/library/sys.html#sys.maxint
+    // Restrict to guaranteed supported range in Python, see maxsize docs: https://docs.python.org/3/library/sys.html#sys.maxsize
     // Don't do this pointless check when long is 32 bits or smaller as strtol will have already failed with ERANGE
 #if LONG_MAX > PYTHON_INT_MAX || LONG_MIN < PYTHON_INT_MIN
     if (value > PYTHON_INT_MAX || value < PYTHON_INT_MIN) {
@@ -2493,7 +2483,7 @@ public:
    * returnTypeAnnotation()
    *
    * Helper function for constructing the function annotation
-   * of the returning type, return a empty string for Python 2.x
+   * of the returning type, return an empty string when annotations are disabled
    * ------------------------------------------------------------ */
   String *returnTypeAnnotation(Node *n) {
     type_annotation_t anno = getTypeAnnotationMode(n);
@@ -4044,7 +4034,7 @@ public:
       Printf(f_directors_h, "    PyObject *swig_get_method(size_t method_index, const char *method_name) const {\n");
       Printf(f_directors_h, "      PyObject *method = vtable[method_index];\n");
       Printf(f_directors_h, "      if (!method) {\n");
-      Printf(f_directors_h, "        swig::SwigVar_PyObject name = SWIG_Python_str_FromChar(method_name);\n");
+      Printf(f_directors_h, "        swig::SwigVar_PyObject name = PyUnicode_FromString(method_name);\n");
       Printf(f_directors_h, "        method = PyObject_GetAttr(swig_get_self(), name);\n");
       Printf(f_directors_h, "        if (!method) {\n");
       Printf(f_directors_h, "          std::string msg = \"Method in class %s doesn't exist, undefined \";\n", classname);
@@ -4435,7 +4425,7 @@ public:
     printSlot(f, getSlot(n, "feature:python:nb_negative"), "nb_negative", "unaryfunc");
     printSlot(f, getSlot(n, "feature:python:nb_positive"), "nb_positive", "unaryfunc");
     printSlot(f, getSlot(n, "feature:python:nb_absolute"), "nb_absolute", "unaryfunc");
-    printSlot(f, getSlot(n, "feature:python:nb_nonzero"), "nb_nonzero", "inquiry");
+    printSlot(f, getSlot(n, "feature:python:nb_bool"), "nb_bool", "inquiry");
     printSlot(f, getSlot(n, "feature:python:nb_invert"), "nb_invert", "unaryfunc");
     printSlot(f, getSlot(n, "feature:python:nb_lshift"), "nb_lshift", "binaryfunc");
     printSlot(f, getSlot(n, "feature:python:nb_rshift"), "nb_rshift", "binaryfunc");
@@ -4609,7 +4599,7 @@ public:
     printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_negative"), "nb_negative", "unaryfunc");
     printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_positive"), "nb_positive", "unaryfunc");
     printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_absolute"), "nb_absolute", "unaryfunc");
-    printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_nonzero"), "nb_bool", "inquiry");
+    printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_bool"), "nb_bool", "inquiry");
     printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_invert"), "nb_invert", "unaryfunc");
     printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_lshift"), "nb_lshift", "binaryfunc");
     printHeapTypesSlot(f, getHeapTypesSlot(n, "feature:python:nb_rshift"), "nb_rshift", "binaryfunc");
@@ -4841,25 +4831,19 @@ public:
       }
 
       if (!builtin) {
-        if (GetFlag(n, "feature:python:nondynamic"))
-          Printv(f_shadow, "@_swig_add_metaclass(_SwigNonDynamicMeta)\n", NIL);
+        String *metaclass = GetFlag(n, "feature:python:nondynamic") ? NewString(", metaclass=_SwigNonDynamicMeta") : NewString("");
         Printv(f_shadow, "class ", class_name, NIL);
 
         if (Len(base_class)) {
-          Printf(f_shadow, "(%s)", base_class);
+          Printf(f_shadow, "(%s%s)", base_class, metaclass);
         } else {
           if (GetFlag(n, "feature:exceptionclass")) {
-            Printf(f_shadow, "(Exception)");
+            Printf(f_shadow, "(Exception%s)", metaclass);
           } else {
-            Printf(f_shadow, "(object");
-            /* Replace @_swig_add_metaclass above with below when support for python 2.7 is dropped
-            if (GetFlag(n, "feature:python:nondynamic")) {
-              Printf(f_shadow, ", metaclass=_SwigNonDynamicMeta");
-            }
-            */
-            Printf(f_shadow, ")");
+            Printf(f_shadow, "(object%s)", metaclass);
           }
         }
+        Delete(metaclass);
 
         Printf(f_shadow, ":\n");
 
@@ -5966,14 +5950,14 @@ int PYTHON::classDirectorMethod(Node *n, Node *parent, String *super) {
                parse_args,
                arglist);
       } else {
-        Printf(w->code, "swig::SwigVar_PyObject swig_method_name = SWIG_Python_str_FromChar(\"%s\");\n", pyname);
+        Printf(w->code, "swig::SwigVar_PyObject swig_method_name = PyUnicode_FromString(\"%s\");\n", pyname);
         Printf(w->code,
                "swig::SwigVar_PyObject %s = PyObject_CallMethodObjArgs(swig_get_self(), (PyObject *) swig_method_name %s, NULL);\n",
                Swig_cresult_name(),
                arglist);
       }
     } else {
-      Printf(w->code, "swig::SwigVar_PyObject swig_method_name = SWIG_Python_str_FromChar(\"%s\");\n", pyname);
+      Printf(w->code, "swig::SwigVar_PyObject swig_method_name = PyUnicode_FromString(\"%s\");\n", pyname);
       Printf(w->code, "swig::SwigVar_PyObject %s = PyObject_CallMethodObjArgs(swig_get_self(), (PyObject *) swig_method_name, NULL);\n", Swig_cresult_name());
     }
     Append(w->code, "#endif\n");
