@@ -3,7 +3,7 @@ dnl The macros which aren't shipped with the autotools are stored in the
 dnl Tools/config directory in .m4 files.
 
 AC_INIT([swig],[4.5.0],[https://www.swig.org])
-AC_PREREQ([2.60])
+AC_PREREQ([2.64])
 
 AC_CONFIG_SRCDIR([Source/Swig/swig.h])
 AC_CONFIG_AUX_DIR([Tools/config])
@@ -261,7 +261,8 @@ AC_MSG_RESULT($LDSHARED)
 AC_MSG_CHECKING(CXXSHARED)
 if test -z "$CXXSHARED"
 then
-	CXXSHARED="$LDSHARED"
+	# Ensure we use CXX for C++
+	CXXSHARED="$(echo "$LDSHARED" | sed 's%\$(CC)%\$(CXX)%')"
 fi
 AC_MSG_RESULT($CXXSHARED)
 
@@ -843,20 +844,23 @@ else
   GOOPT=
   GCCGOOPT=
   GOVERSIONOPTION=
+  GOMINVER='1.20'
+  case $host in
+  *-*-cygwin* | *-*-mingw* | *-*-msys*)
+    AS_IF([test "$CYGPATH" != "false" ],
+        [AS_VAR_SET([GO_CYGPATH], ["$CYGPATH"])])
+    ;;
+  esac
 
   if test -n "$GO" ; then
     GOVERSIONOPTION=version
-    go_version=$($GO $GOVERSIONOPTION | sed -e 's/go version //')
+    go_version="$($GO $GOVERSIONOPTION | sed 's%go *%%g;s%version *%%;s% .*%%')"
     AC_MSG_CHECKING([whether go version is too old])
-    case $go_version in
-    go1.[012]*)
-      AC_MSG_RESULT([yes - minimum version is 1.3])
-      GO=
-      ;;
-    *)
-      AC_MSG_RESULT([no])
-      ;;
-    esac
+    AS_VERSION_COMPARE(["$go_version"], ["$GOMINVER"],
+                   [AC_MSG_RESULT([yes - minimum version is $GOMINVER])
+                    AS_UNSET([GO])],        dnl bellow GOMINVER
+                   [AC_MSG_RESULT([no])],   dnl equal GOMINVER
+                   [AC_MSG_RESULT([no])])   dnl above GOMINVER
   fi
 
   AC_CHECK_PROGS(GCCGO, gccgo)
@@ -892,6 +896,8 @@ AC_SUBST(GO15)
 AC_SUBST(GOOPT)
 AC_SUBST(GCCGOOPT)
 AC_SUBST(GOVERSIONOPTION)
+AC_SUBST(GOMINVER)
+AC_SUBST(GO_CYGPATH)
 
 #----------------------------------------------------------------
 # Look for Guile

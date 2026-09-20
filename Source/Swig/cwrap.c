@@ -399,7 +399,7 @@ String *Swig_cfunction_call(const_String_or_char_ptr name, ParmList *parms) {
       if (comma)
         Append(func, ",");
       if (cparse_cplusplus && SwigType_type(rpt) == T_USER)
-        Printv(func, "SWIG_STD_MOVE(", rcaststr, ")", NIL);
+        Printv(func, "SWIG_STD_MOVE(*(&", rcaststr, "))", NIL);
       else
         Printv(func, rcaststr, NIL);
       Delete(rpt);
@@ -499,7 +499,7 @@ static String *Swig_cmethod_call(const_String_or_char_ptr name, ParmList *parms,
       if (comma)
         Append(func, ",");
       if (cparse_cplusplus && SwigType_type(pt) == T_USER)
-        Printv(func, "SWIG_STD_MOVE(", rcaststr, ")", NIL);
+        Printv(func, "SWIG_STD_MOVE(*(&", rcaststr, "))", NIL);
       else
         Printv(func, rcaststr, NIL);
       Delete(rcaststr);
@@ -574,7 +574,7 @@ static String *Swig_cppconstructor_base_call(const_String_or_char_ptr name, Parm
       }
       rcaststr = SwigType_rcaststr(pt, pname);
       if (cparse_cplusplus && SwigType_type(pt) == T_USER)
-        Printv(func, "SWIG_STD_MOVE(", rcaststr, ")", NIL);
+        Printv(func, "SWIG_STD_MOVE(*(&", rcaststr, "))", NIL);
       else
         Printv(func, rcaststr, NIL);
       Delete(rcaststr);
