@@ -101,8 +101,37 @@ int is_python_fastproxy() { return 0; }
 
 %typemap(pytyping) (int argc, char **argv) "typing.List[str]"
 
+%typemap(in, numinputs=0) short *OutAppend (short temp) { $1 = &temp; }
+%typemap(argout) (short *OutAppend) {
+  $result = SWIG_AppendOutput($result, PyLong_FromLong(*$1));
+}
+%typemap(pytyping) short *OutAppend "int"
+%apply short *OutAppend { short *OutAppend2 };
+
+%typemap(in, numinputs=0) (short **short_list)(short*temp) { $1 = &temp; }
+%typemap(in, numinputs=0) (size_t *short_list_len)(size_t temp) { $1 = &temp; }
+%typemap(freearg) (short **short_list) { free(*$1); }
+%typemap(argout) (short **short_list, size_t *short_list_len) {
+  PyObject *list = PyList_New(*$2);
+  for (size_t i = 0; i < *$2; i++)
+    PyList_SetItem(list, i, PyLong_FromLong((*$1)[i]));
+  $result = SWIG_AppendOutput($result, list);
+}
+%typemap(pytyping) (short **short_list, size_t *short_list_len) "typing.List[int]"
+
+/* An argout typemap on a constructor parameter. It must not append, as the constructor
+   result is the new object rather than something to add to. */
+%typemap(in, numinputs=0) short *CtorFlag (short temp) { $1 = &temp; }
+%typemap(argout) short *CtorFlag { (void)*$1; }
+%typemap(pytyping) short *CtorFlag "None"
+
 %inline %{
 #include <cstddef>
+
+struct ArgoutConstructor {
+  int value;
+  ArgoutConstructor(int v, short *CtorFlag) : value(v) { *CtorFlag = 1; }
+};
 
 void take_argv(int argc, char **argv) {}
 
@@ -271,6 +300,59 @@ struct HasClassMembers {
 struct ForwardOnly;
 void use_forward_only(ForwardOnly *fp) { (void)fp; }
 
+void argoutVoidSingleAppend(bool arg, short *OutAppend) { *OutAppend = 42; }
+
+bool argoutBoolSingleAppend(bool arg, short *OutAppend) {
+  *OutAppend = 42;
+  return arg;
+}
+
+void argoutVoidAppendTwice(bool arg, short *OutAppend, short *OutAppend2) {
+  *OutAppend = 42;
+  *OutAppend2 = 43;
+}
+
+bool argoutBoolAppendTwice(bool arg, short *OutAppend, short *OutAppend2) {
+  *OutAppend = 42;
+  *OutAppend2 = 43;
+  return arg;
+}
+
+void argoutMultiarg(short **short_list, size_t *short_list_len) {
+  *short_list = NULL;
+  *short_list_len = 0;
+}
+
+bool argoutBoolMultiarg(bool arg, short **short_list, size_t *short_list_len) {
+  *short_list = NULL;
+  *short_list_len = 0;
+  return arg;
+}
+
+void argoutMultiargAfterFirst(int first, short **short_list, size_t *short_list_len) {
+  (void)first;
+  *short_list = NULL;
+  *short_list_len = 0;
+}
+
+bool argoutBoolMultiargAfterFirst(int first, short **short_list, size_t *short_list_len) {
+  *short_list = NULL;
+  *short_list_len = 0;
+  return first != 0;
+}
+
+void argoutMultiargBetweenFirstLast(int first, short **short_list, size_t *short_list_len, double last) {
+  (void)first;
+  (void)last;
+  *short_list = NULL;
+  *short_list_len = 0;
+}
+
+bool argoutBoolMultiargBetweenFirstLast(int first, short **short_list, size_t *short_list_len, double last) {
+  *short_list = NULL;
+  *short_list_len = 0;
+  return first != 0 && last != 0.0;
+}
 %}
 
 // A class-typed %constant is annotated at module level.

@@ -501,6 +501,34 @@ static int classify_template_param_type(const SwigType *type) {
   return verdict;
 }
 
+/* Build the SwigType for the 'auto' placeholder matched by the 'auto_type_holder' rule.  'conceptid' is the C++20
+ * type-constraint concept-id and 'qualifier' the cv-qualifier, either of which may be 0, giving 'auto' for a plain
+ * 'auto', 'q(const).auto' for 'const auto' and 'q(const).auto.c(Numeric)' for 'const Numeric auto'. */
+static SwigType *auto_type_holder_type(String *qualifier, String *conceptid) {
+  SwigType *t = SwigType_new_auto(conceptid);
+  if (qualifier)
+    SwigType_push(t, qualifier);
+  return t;
+}
+
+/* Attach a C++20 type-constraint to node 'n' as a 'concept-id' atom on the 'constraint' attribute, for downstream
+ * inspection.  Does nothing when the placeholder was unconstrained. */
+static void set_concept_constraint(Node *n, String *conceptid) {
+  if (conceptid) {
+    Node *atom = Constraint_new_atom("concept-id");
+    Setattr(atom, "type", conceptid);
+    Setattr(n, "constraint", atom);
+  }
+}
+
+/* Set the undeduced 'auto' placeholder as the type of node 'n', together with any type-constraint it carries. */
+static void set_auto_type(Node *n, String *qualifier, String *conceptid) {
+  SwigType *t = auto_type_holder_type(qualifier, conceptid);
+  Setattr(n, "type", t);
+  Delete(t);
+  set_concept_constraint(n, conceptid);
+}
+
 /* If the cdecl 'n' has any parameter whose type is 'auto' or 'Concept auto' (a C++20 abbreviated function template) replace
  * each such parm with an invented type template parameter (named '__dummy_auto_<N>__') and convert 'n' to a template node
  * carrying those typenames as templateparms.  When a concept type-constraint is present, attach it as a 'constraint' attribute
@@ -535,7 +563,13 @@ static int promote_abbreviated_template(Node *n) {
       continue;
     {
       String *invented_name = NewStringf("__dummy_auto_%d__", auto_cnt++);
-      Parm *tp = NewParmWithoutFileLineInfo(NewString("typename"), invented_name);
+      SwigType *invented_type = NewString("typename");
+      Parm *tp;
+      /* A pack expansion such as 'auto&&... args' invents a template parameter pack, exactly as the explicit
+       * 'template<typename... T> f(T&&... args)' spelling does, so the invented parameter is variadic too. */
+      if (SwigType_isvariadic(ty))
+        SwigType_add_variadic(invented_type);
+      tp = NewParmWithoutFileLineInfo(invented_type, invented_name);
       Setfile(tp, Getfile(n));
       Setline(tp, Getline(n));
       SetFlag(tp, "abbreviated_auto");
@@ -556,6 +590,7 @@ static int promote_abbreviated_template(Node *n) {
       }
       last_invented = tp;
       Delete(invented_name);
+      Delete(invented_type);
       Delete(concept_name);
     }
   }
@@ -817,6 +852,7 @@ static void add_symbols(Node *n) {
 
     if (cparse_cplusplus) {
       String *value = Getattr(n, "value");
+      SwigType *auto_type = Getattr(n, "type");
       if (value && Strcmp(value, "delete") == 0) {
 	/* C++11 deleted definition / deleted function */
         SetFlag(n,"deleted");
@@ -833,18 +869,49 @@ static void add_symbols(Node *n) {
 	  SetFlag(n, "feature:ignore");
 	}
       }
-      if (Equal(Getattr(n, "type"), "auto")) {
+      /* SwigType_isauto() splits the type, so pre-filter on the substring to keep add_symbols cheap.  It matches the
+       * cv-qualified placeholders too, such as the 'q(const).auto' produced for a 'const auto&' return type. */
+      if (auto_type && Strstr(auto_type, "auto") && SwigType_isauto(auto_type)) {
 	/* Ignore functions with an auto return type and no trailing return type
 	 * Use Getattr instead of GetFlag to handle explicit ignore and explicit not ignore */
 	if (!(Getattr(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0)) {
-	  SWIG_WARN_NODE_BEGIN(n);
-	  if (SwigType_isfunction(Getattr(n, "decl")))
-	    Swig_warning(WARN_CPP14_AUTO, Getfile(n), Getline(n), "Unable to deduce auto return type for '%s' (ignored).\n", Swig_name_decl(n));
-	  else
-	    Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' (ignored).\n", Swig_name_decl(n));
-	  SWIG_WARN_NODE_END(n);
-	  SetFlag(n, "feature:ignore");
+          /* Say which of the two got in the way: the form of the declaration, which is one SWIG does not
+           * support, or the initialiser, which SWIG understood but could not deduce a type from. */
+          SWIG_WARN_NODE_BEGIN(n);
+          if (SwigType_isfunction(Getattr(n, "decl"))) {
+            if (GetFlag(n, "autodeducefrombody")) {
+              Swig_warning(WARN_CPP14_AUTO, Getfile(n), Getline(n), "Unable to deduce auto return type for '%s' (ignored).\n",
+                  Swig_name_decl(n));
+            } else {
+              Swig_warning(WARN_CPP14_AUTO, Getfile(n), Getline(n), "Unable to deduce auto return type for '%s' without a trailing return type (ignored).\n",
+                  Swig_name_decl(n));
+            }
+          } else if (value) {
+            Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' from initialiser '%s' (ignored).\n",
+                Swig_name_decl(n), value);
+          } else {
+            Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' from an unsupported initialiser (ignored).\n",
+                Swig_name_decl(n));
+          }
+          SWIG_WARN_NODE_END(n);
+          SetFlag(n, "feature:ignore");
 	}
+      }
+      if (Getattr(n, "autotypemismatch")) {
+        /* Two declarators of one 'auto' declaration deduced different types, which C++ does not allow, so the
+         * declaration does not compile as it stands.  Each variable is still wrapped with the type its own
+         * initialiser deduced, which is the best guess SWIG can make at what was meant. */
+        if (!(Getattr(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0)) {
+          String *deduced = SwigType_str(Getattr(n, "type"), 0);
+          String *shared = SwigType_str(Getattr(n, "autotypemismatch"), 0);
+          SWIG_WARN_NODE_BEGIN(n);
+          Swig_warning(WARN_CPP11_AUTO_INCONSISTENT_DEDUCTION, Getfile(n), Getline(n),
+              "Inconsistent auto type deduction for variable '%s': initialiser '%s' deduces '%s', not '%s'.\n", Swig_name_decl(n), value, deduced, shared);
+          SWIG_WARN_NODE_END(n);
+          Delete(shared);
+          Delete(deduced);
+        }
+        Delattr(n, "autotypemismatch");
       }
     }
     if (only_csymbol || GetFlag(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0) {
@@ -1953,6 +2020,8 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
     String    *numdefarg;
     ParmList  *parms;
     short      have_parms;
+    /* C++23 explicit object parameter, that is a leading 'this' parameter on the function declarator. */
+    short      explicit_object_parm;
     ParmList  *throws;
     String    *throwf;
     String    *nexcept;
@@ -1969,6 +2038,14 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
     String     *type;
     String     *us;
   } ptype;
+  struct {
+    /* An 'auto' placeholder, optionally cv-qualified and type-constrained, e.g. 'const Numeric auto'.
+     * 'isdecltypeauto' marks the C++14 'decltype(auto)' spelling, which takes neither a cv-qualifier
+     * nor a type-constraint. */
+    String     *qualifier;
+    String     *conceptid;
+    int         isdecltypeauto;
+  } autotype;
   SwigType     *type;
   String       *str;
   Parm         *p;
@@ -2008,6 +2085,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token STATIC_ASSERT CONSTEXPR THREAD_LOCAL DECLTYPE AUTO NOEXCEPT /* C++11 keywords */
 %token OVERRIDE FINAL /* C++11 identifiers with special meaning */
 %token CONCEPT REQUIRES /* C++20 keywords */
+%token THIS /* C++ keyword, for the C++23 explicit object parameter and for 'this' in an expression */
 %token USING
 %token NAMESPACE
 %token NATIVE INLINE
@@ -2055,7 +2133,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <node>     types_directive template_directive warn_directive ;
 
 /* C declarations */
-%type <node>     c_declaration c_decl c_decl_tail c_enum_decl c_enum_forward_decl c_constructor_decl deduction_guide;
+%type <node>     c_declaration c_decl c_decl_tail c_decl_list_tail auto_decl_tail c_enum_decl c_enum_forward_decl c_constructor_decl deduction_guide;
 %type <type>     c_enum_inherit;
 %type <node>     enumlist enumlist_item edecl_with_dox edecl;
 %type <id>       c_enum_key;
@@ -2086,16 +2164,20 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <id>       access_specifier;
 %type <node>     base_specifier;
 %type <intvalue> variadic_opt;
-%type <type>     type rawtype type_right anon_bitfield_type decltype decltypeexpr cpp_alternate_rettype;
+%type <type>     type rawtype type_right anon_bitfield_type decltype decltypeexpr cpp_alternate_rettype explicit_instantiation_rettype trailing_rettype;
+%type <str>      decltype_prefix;
+%type <str>      structured_binding_names;
 %type <bases>    base_list inherit raw_inherit;
 %type <dtype>    definetype def_args etype default_delete deleted_definition explicit_default;
+%type            deleted_reason;
 %type <dtype>    expr exprnum exprsimple exprcompound valexpr exprmem;
 %type <id>       ename ;
 %type <str>      less_valparms_greater;
 %type <str>      type_qualifier;
+%type <autotype> auto_type_holder;
 %type <str>      ref_qualifier;
 %type <node>     requires_clause_opt;
-%type <node>     constraint constraint_or constraint_and constraint_primary;
+%type <node>     constraint concept_constraint constraint_or constraint_and constraint_primary;
 %type <node>     requires_expression requirement_body;
 %type <pl>       requirement_parameter_list_opt;
 %type <id>       type_qualifier_raw;
@@ -2105,7 +2187,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <includetype> includetype;
 %type <type>     pointer primitive_type;
 %type <decl>     declarator direct_declarator notso_direct_declarator parameter_declarator plain_declarator;
-%type <decl>     abstract_declarator direct_abstract_declarator ctor_end;
+%type <decl>     abstract_declarator abstract_declarator_no_memberpointer direct_abstract_declarator ctor_end;
 %type <tmap>     typemap_type;
 %type <str>      idcolon idcolontail idcolonnt idcolontailnt idtemplate idtemplatetemplate stringbrace stringbracesemi;
 %type <str>      using_conversion using_scope;
@@ -2117,7 +2199,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <ptype>    type_specifier primitive_type_list ;
 %type <node>     fname stringtype;
 %type <node>     featattr;
-%type            lambda_introducer lambda_body lambda_template lambda_tail;
+%type            lambda_introducer lambda_body lambda_parms lambda_template lambda_tail;
 %type <str>      virt_specifier_seq virt_specifier_seq_opt;
 %type <str>      class_virt_specifier_opt;
 
@@ -2129,27 +2211,248 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 static const struct Decl default_decl;
 static const struct Define default_dtype;
 
-/* C++ decltype/auto type deduction. */
-static SwigType *deduce_type(const struct Define *dtype) {
-  Node *n;
-  if (!dtype->val) return NULL;
-  n = Swig_symbol_clookup(dtype->val, 0);
-  if (n) {
-    if (Strcmp(nodeType(n),"enumitem") == 0) {
-      /* For an enumitem, the "type" attribute gives us the underlying integer
-       * type - we want the "type" attribute from the enum itself, which is
-       * "parentNode".
-       */
-      n = Getattr(n, "parentNode");
-    }
-    return Getattr(n, "type");
-  } else if (dtype->type != T_AUTO && dtype->type != T_UNKNOWN) {
-    /* Try to deduce the type from the T_* type code. */
-    String *deduced_type = NewSwigType(dtype->type);
-    if (Len(deduced_type) > 0) return deduced_type;
-    Delete(deduced_type);
+/* Look 'name' up in the symbol table and return a copy of the type it was declared with, with its declarator
+   applied, so that the 'pg' of 'int *pg;' gives 'p.int' and not just the 'int' held in the "type" attribute.
+   Returns 0 when the name is not in scope. */
+static SwigType *symbol_full_type(String *name) {
+  Node *n = Swig_symbol_clookup(name, 0);
+  SwigType *type;
+  SwigType *decl;
+  String *storage;
+  if (!n)
+    return 0;
+  if (Equal(nodeType(n), "enumitem")) {
+    /* For an enumitem, the "type" attribute gives us the underlying integer type - we want the "type"
+     * attribute from the enum itself, which is "parentNode". */
+    n = Getattr(n, "parentNode");
   }
-  return NULL;
+  type = Getattr(n, "type");
+  if (!type)
+    return 0;
+  type = Copy(type);
+  decl = Getattr(n, "decl");
+  if (decl)
+    SwigType_push(type, decl);
+  storage = Getattr(n, "storage");
+  if (storage && Strstr(storage, "constexpr") && !SwigType_isconst(type)) {
+    /* A 'constexpr' object is const, but SWIG keeps constexpr in the "storage" attribute rather than in the
+     * type, so add the qualifier that taking the address of the object has to see. */
+    SwigType_add_qualifier(type, "const");
+  }
+  return type;
+}
+
+/* C++ decltype/auto type deduction.  Returns a new type, or 0 when the expression is not one a type can be
+   deduced from. */
+static SwigType *deduce_type(const struct Define *dtype) {
+  SwigType *deduced;
+  if (!dtype->val)
+    return 0;
+  deduced = symbol_full_type(dtype->val);
+  if (deduced) {
+    /* The name of a function is not something a variable or a decltype can be deduced from. */
+    if (!SwigType_isfunction(deduced))
+      return deduced;
+    Delete(deduced);
+  } else if (Len(dtype->val) > 1 && *Char(dtype->val) == '&') {
+    /* The address of something in scope, such as the '&g' in 'auto p = &g;', is a pointer to the type of that
+     * something.  The unary '&' rule spells the value '&' followed by its operand.  The operand may be a
+     * function here, giving a function pointer. */
+    String *operand = NewString(Char(dtype->val) + 1);
+    deduced = symbol_full_type(operand);
+    Delete(operand);
+    if (deduced) {
+      SwigType_add_pointer(deduced);
+      return deduced;
+    }
+  }
+  if (dtype->type != T_AUTO && dtype->type != T_UNKNOWN) {
+    /* Try to deduce the type from the T_* type code. */
+    deduced = NewSwigType(dtype->type);
+    if (Len(deduced) > 0)
+      return deduced;
+    Delete(deduced);
+  }
+  return 0;
+}
+
+/* Deduce the type the 'auto' placeholder stands for in a variable declaration, given 'initialiser_type', the type
+   deduced from the initialiser, and 'decl', the declarator the placeholder carries.  The declarator decoration is
+   not part of the placeholder: for 'auto* p = pg;' with 'pg' declared 'int *', the placeholder stands for 'int'
+   and the 'p.' belongs to the declarator, so the decoration is matched against the initialiser type and removed.
+   A reference declarator binds to the initialiser rather than being deduced from it, so the 'auto&' of
+   'auto& r = g;' with 'g' an 'int' leaves 'int' too.  Returns 0 when the declarator does not match the
+   initialiser type, which is not valid C++ anyway. */
+static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *decl) {
+  SwigType *placeholder = Copy(initialiser_type);
+  SwigType *remaining = Copy(decl);
+  int matched = 1;
+
+  if (SwigType_isreference(remaining) || SwigType_isrvalue_reference(remaining)) {
+    Delete(SwigType_pop(remaining));
+  } else {
+    /* Deduction drops the top level cv-qualifiers of the initialiser unless the variable is a reference, so
+     * 'auto x = cg;' with 'cg' declared 'const int' deduces 'int' while 'auto& r = cg;' deduces 'const int'. */
+    while (SwigType_isqualifier(placeholder))
+      Delete(SwigType_pop(placeholder));
+  }
+
+  while (matched && Len(remaining) > 0) {
+    SwigType *op = SwigType_pop(remaining);
+    /* A cv-qualifier in the declarator, as in the 'auto* const' of 'auto* const p = pg;', qualifies the variable
+     * rather than the placeholder, so there is nothing in the initialiser type to match it against. */
+    if (!SwigType_isqualifier(op)) {
+      SwigType *initialiser_op = SwigType_pop(placeholder);
+      if (!initialiser_op || !Equal(op, initialiser_op))
+        matched = 0;
+      Delete(initialiser_op);
+    }
+    Delete(op);
+  }
+
+  Delete(remaining);
+  if (!matched || Len(placeholder) == 0) {
+    Delete(placeholder);
+    placeholder = 0;
+  }
+  return placeholder;
+}
+
+/* The type of an 'auto' variable declared with declarator 'decl' and initialised by 'dtype', which is the type
+   deduced from the initialiser with the declarator decoration removed and the placeholder's own cv-qualifier
+   added back.  Returns 0 when the initialiser is not one a type can be deduced from.  A function declarator makes
+   the placeholder a deduced return type rather than a variable type, as in 'auto f() = delete;', and there is
+   then nothing to deduce it from. */
+static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, String *qualifier, int isdecltypeauto) {
+  SwigType *type = 0;
+  SwigType *initialiser_type = SwigType_isfunction(decl) ? 0 : deduce_type(dtype);
+
+  if (initialiser_type) {
+    if (isdecltypeauto) {
+      /* 'decltype(auto)' deduces the declared type of the initialiser exactly, keeping the references and the top
+       * level cv-qualifiers that 'auto' would drop.  C++ requires the type to be 'decltype(auto)' on its own, so
+       * there is no declarator decoration or cv-qualifier of its own to account for. */
+      type = Copy(initialiser_type);
+    } else {
+      type = deduce_auto_placeholder(initialiser_type, decl);
+    }
+    Delete(initialiser_type);
+  }
+  if (type && qualifier)
+    SwigType_push(type, qualifier);
+  return type;
+}
+
+/* Whether the types deduced for two declarators of one 'auto' declaration are certainly different types, rather
+   than two spellings SWIG cannot yet tell denote the same type.  Only the fundamental types are spelled
+   canonically while a declaration is being parsed: the 'myint' of 'typedef int myint;' is a different string to
+   'int' but the same type, and the typedef is not resolvable yet, so anything not a fundamental type is left
+   alone rather than reported as a mismatch. */
+static int auto_types_differ(SwigType *type1, SwigType *type2) {
+  int code1 = SwigType_type(type1);
+  int code2 = SwigType_type(type2);
+  if (code1 == T_USER || code2 == T_USER || code1 == T_UNKNOWN || code2 == T_UNKNOWN)
+    return 0;
+  return code1 != code2;
+}
+
+/* Set the type of every variable declared by one 'auto' declaration, given the chain of declarator nodes starting
+   at 'first' and 'first_dtype', the initialiser the grammar evaluated for the first of them.
+
+   C++ deduces a single type for the whole declaration - N4861 [dcl.spec.auto] paragraph 7 makes the program
+   ill-formed when the declarators do not all deduce the same type - so a declarator whose own initialiser is not
+   one SWIG can deduce from takes the type its siblings deduced.  Only when no declarator at all deduces a type is
+   the placeholder left in place, for add_symbols() to ignore each variable with a warning naming its own
+   initialiser.  A declarator that deduces a different type to the declaration is marked so that add_symbols() can
+   report the inconsistency; it keeps the type its own initialiser deduced, which is the best guess available.
+
+   The declarators after the first are read back from the parse tree, which holds the text of the initialiser but
+   not the value the grammar evaluated for it, so a type is deduced from a name or a single literal only. */
+static void set_auto_variable_types(Node *first, const struct Define *first_dtype, String *qualifier, String *conceptid, int isdecltypeauto) {
+  SwigType *declaration_type = 0;
+  Node *n;
+
+  for (n = first; n; n = nextSibling(n)) {
+    struct Define dtype = default_dtype;
+    SwigType *type;
+    if (n == first) {
+      dtype = *first_dtype;
+    } else {
+      dtype.val = Getattr(n, "value");
+      if (dtype.val)
+        dtype.type = literal_type_code(dtype.val);
+    }
+    type = auto_variable_type(&dtype, Getattr(n, "decl"), qualifier, isdecltypeauto);
+    if (type) {
+      Setattr(n, "autotype", type);
+      if (!declaration_type)
+        declaration_type = Copy(type);
+      Delete(type);
+    }
+  }
+
+  for (n = first; n; n = nextSibling(n)) {
+    SwigType *type = Getattr(n, "autotype");
+    if (type && declaration_type && !Equal(type, declaration_type) && auto_types_differ(type, declaration_type))
+      Setattr(n, "autotypemismatch", declaration_type);
+    if (!type)
+      type = declaration_type;
+    if (type) {
+      Setattr(n, "type", type);
+      Setattr(n, "valuetype", type);
+    } else {
+      SwigType *holder = auto_type_holder_type(qualifier, conceptid);
+      Setattr(n, "type", holder);
+      Setattr(n, "valuetype", holder);
+      Delete(holder);
+    }
+    Delattr(n, "autotype");
+  }
+  Delete(declaration_type);
+}
+
+/* Returns the T_* type code a named cast casts to, that is the code for the 'double' of 'static_cast<double>(y)',
+   or 0 when 't' is not one of the four named casts or the cast is to a type no T_* code describes.  A named cast
+   is spelled like a template-id, so it reaches the grammar as a template type. */
+static int named_cast_type_code(SwigType *t) {
+  int code = 0;
+  String *prefix;
+  if (!SwigType_istemplate(t))
+    return 0;
+  prefix = SwigType_templateprefix(t);
+  if (Equal(prefix, "static_cast") || Equal(prefix, "const_cast") || Equal(prefix, "dynamic_cast") || Equal(prefix, "reinterpret_cast")) {
+    List *parms = SwigType_parmlist(t);
+    if (parms && Len(parms) == 1) {
+      SwigType *cast_to = Getitem(parms, 0);
+      code = SwigType_type(cast_to);
+      if (code == T_USER)
+        code = 0;
+      if (code) {
+        /* The code is only a summary of the type, and the caller rebuilds the type from it with
+         * NewSwigType().  Both 'char *' and 'const char *' summarise to T_STRING, which rebuilds
+         * as 'const char *', so deducing from a code that does not rebuild into the type it came
+         * from would silently add a qualifier the cast never had. */
+        SwigType *rebuilt = NewSwigType(code);
+        if (!Equal(rebuilt, cast_to))
+          code = 0;
+        Delete(rebuilt);
+      }
+    }
+    Delete(parms);
+  }
+  Delete(prefix);
+  return code;
+}
+
+/* The initialiser held in the braced initialiser text 'braced', that is the text between the outermost braces
+   with any surrounding whitespace removed, so '{ 42 }' gives '42' and '{}' gives an empty string. */
+static String *braced_initialiser_value(String *braced) {
+  String *value;
+  if (Len(braced) < 2)
+    return NewStringEmpty();
+  value = NewStringWithSize(Char(braced) + 1, Len(braced) - 2);
+  Swig_cparse_trim_whitespace(value);
+  return value;
 }
 
 // Append scanner_ccode to expr.  Some cleaning up of the code may be done.
@@ -2204,6 +2507,58 @@ static Node *new_enum_node(SwigType *enum_base_type) {
     Setattr(n, "enumbase", enum_base_type);
   }
   return n;
+}
+
+/* Add the function declarator '(parms)' to the declarator 'd', extending the declarator's type and recording 'parms'
+   as the declarator's parameter list unless an inner declarator already provided one.  'qualifier' is the trailing
+   cv-qualifier and ref-qualifier of the function, or 0 when it has none; it belongs under whatever the enclosing
+   declarator adds, so it has to go on before the declarator's existing type does. */
+static void declarator_add_function(struct Decl *d, ParmList *parms, SwigType *qualifier) {
+  SwigType *t = NewStringEmpty();
+  SwigType_add_function(t, parms);
+  if (qualifier)
+    SwigType_push(t, qualifier);
+  if (!d->have_parms) {
+    d->parms = parms;
+    d->have_parms = 1;
+  }
+  if (!d->type) {
+    d->type = t;
+  } else {
+    SwigType_push(t, d->type);
+    Delete(d->type);
+    d->type = t;
+  }
+}
+
+/* Drop the C++23 explicit object parameter, that is the leading parameter declared with the 'this' specifier, from
+   the parameter list 'parms' and return the parameters that follow it.  The explicit object parameter is how the
+   object the member function is called on is passed, so it is not one of the function's arguments and must appear
+   neither in the wrapper's parameter list nor in the function's declarator. */
+static ParmList *drop_explicit_object_parameter(ParmList *parms) {
+  if (!parms) {
+    Swig_error(cparse_file, cparse_line, "Missing parameter declaration after 'this'.\n");
+    return 0;
+  }
+  if (Getattr(parms, "value"))
+    Swig_error(cparse_file, cparse_line, "Explicit object parameter 'this' cannot have a default argument.\n");
+  return nextSibling(parms);
+}
+
+/* Diagnose the restrictions C++23 places on a function declared with an explicit object parameter: it has to be a
+   non-static, non-virtual member function and cannot be declared with a cv-qualifier or a ref-qualifier, as the
+   explicit object parameter itself is what carries the value category and constness of the object. */
+static void check_explicit_object_parameter(Node *n, String *storage, String *qualifier, String *refqualifier) {
+  String *name = Getattr(n, "name");
+  /* A member function defined outside its class is written at namespace scope, so a qualified name is a member too. */
+  int ismember = inclass || extendmode || (name && Swig_scopename_check(name));
+  if (!ismember) {
+    Swig_error(cparse_file, cparse_line, "Function %s is not a member function so cannot have an explicit object parameter 'this'.\n", Swig_name_decl(n));
+  } else if (storage && (Strstr(storage, "static") || Strstr(storage, "virtual"))) {
+    Swig_error(cparse_file, cparse_line, "Member function %s with an explicit object parameter 'this' cannot be declared static or virtual.\n", Swig_name_decl(n));
+  } else if (qualifier || refqualifier) {
+    Swig_error(cparse_file, cparse_line, "Member function %s with an explicit object parameter 'this' cannot have a qualifier.\n", Swig_name_decl(n));
+  }
 }
 
 %}
@@ -3592,6 +3947,19 @@ c_declaration   : c_decl {
 		  SetFlag($$,"typealias");
 		  add_symbols($$);
 		}
+                /* Alias declaration for a function type written with the C++11 alternate function syntax, such as
+                   'using FP = auto (*)(int) -> int;'.  */
+                | USING idcolon EQUAL auto_type_holder abstract_declarator ARROW cpp_alternate_rettype SEMI {
+                  $$ = new_node("cdecl");
+                  Setattr($$, "type", $cpp_alternate_rettype);
+                  Setattr($$, "storage", "typedef");
+                  Setattr($$, "name", $idcolon);
+                  Setattr($$, "decl", $abstract_declarator.type);
+                  SetFlag($$, "typealias");
+                  if ($auto_type_holder.qualifier)
+                    Swig_error(cparse_file, cparse_line, "Alias %s with a trailing return type cannot have a qualifier on 'auto'.\n", $idcolon);
+                  add_symbols($$);
+                }
                 | TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause_opt USING idcolon EQUAL type plain_declarator SEMI {
 		  /* Convert alias template to a "template" typedef statement */
 		  $$ = new_node("template");
@@ -3606,6 +3974,22 @@ c_declaration   : c_decl {
 		    Setattr($$, "constraint", $requires_clause_opt);
 		  add_symbols($$);
 		}
+                /* Alias template for a function type written with the C++11 alternate function syntax. */
+                | TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause_opt USING idcolon EQUAL auto_type_holder abstract_declarator ARROW cpp_alternate_rettype SEMI {
+                  $$ = new_node("template");
+                  Setattr($$, "type", $cpp_alternate_rettype);
+                  Setattr($$, "storage", "typedef");
+                  Setattr($$, "name", $idcolon);
+                  Setattr($$, "decl", $abstract_declarator.type);
+                  Setattr($$, "templateparms", $template_parms);
+                  Setattr($$, "templatetype", "cdecl");
+                  SetFlag($$, "aliastemplate");
+                  if ($requires_clause_opt)
+                    Setattr($$, "constraint", $requires_clause_opt);
+                  if ($auto_type_holder.qualifier)
+                    Swig_error(cparse_file, cparse_line, "Alias %s with a trailing return type cannot have a qualifier on 'auto'.\n", $idcolon);
+                  add_symbols($$);
+                }
                 | cpp_static_assert
                 ;
 
@@ -3625,6 +4009,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$,"decl",decl);
 	      Setattr($$,"parms",$declarator.parms);
 	      Setattr($$,"value",$initializer.val);
+              if ($declarator.explicit_object_parm)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
 	      if ($initializer.stringval) Setattr($$, "stringval", $initializer.stringval);
 	      if ($initializer.numval) Setattr($$, "numval", $initializer.numval);
 	      Setattr($$,"throws",$cpp_const.throws);
@@ -3746,17 +4132,24 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
 	      Delete($storage_class);
 	   }
-           /* C++20 abbreviated function template with a constrained auto return type
-            * combined with an explicit trailing return type, e.g.
+           /* Alternate function syntax introduced in C++11, with the C++20 constrained placeholder allowed too:
+            *   auto funcName(int x, int y) -> int;
             *   Numeric auto fn(int x) -> int { return x; }
+            *   auto fn(T t) -> T requires Numeric<T> { return t; }
             * The trailing return type is what SWIG wraps; the concept-id is captured as a
-            * 'concept-id' atom on the 'constraint' attribute for downstream inspection. */
-           | storage_class idcolon AUTO declarator cpp_const ARROW cpp_alternate_rettype virt_specifier_seq_opt initializer c_decl_tail {
-              Node *atom;
+            * 'concept-id' atom on the 'constraint' attribute for downstream inspection.  A cv-qualifier on the
+            * placeholder is not valid C++ here, the declared type has to be the placeholder on its own.
+            * The trailing requires-clause comes after the trailing return type, that being the end of the
+            * declarator, and is conjoined with any type-constraint on the placeholder. */
+           | storage_class auto_type_holder declarator cpp_const ARROW trailing_rettype virt_specifier_seq_opt requires_clause_opt initializer c_decl_tail {
               $$ = new_node("cdecl");
 	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$,"refqualifier",$cpp_const.refqualifier);
-	      Setattr($$,"type",$cpp_alternate_rettype);
+              Setattr($$,"type",$trailing_rettype);
+              /* A trailing return type that is itself a placeholder, 'auto f() -> auto' or 'auto f() -> decltype(auto)',
+               * still leaves the return type to be deduced from the body. */
+              if (SwigType_isauto($trailing_rettype))
+                SetFlag($$, "autodeducefrombody");
 	      Setattr($$,"storage",$storage_class);
 	      Setattr($$,"name",$declarator.id);
 	      Setattr($$,"decl",$declarator.type);
@@ -3765,9 +4158,16 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$,"throw",$cpp_const.throwf);
 	      Setattr($$,"noexcept",$cpp_const.nexcept);
 	      Setattr($$,"final",$cpp_const.final);
-	      atom = Constraint_new_atom("concept-id");
-	      Setattr(atom, "type", $idcolon);
-	      Setattr($$, "constraint", atom);
+              set_concept_constraint($$, $auto_type_holder.conceptid);
+              if ($requires_clause_opt) {
+                Node *placeholder = Getattr($$, "constraint");
+                Node *constraint = placeholder ? Constraint_combine("and", placeholder, $requires_clause_opt) : $requires_clause_opt;
+                Setattr($$, "constraint", constraint);
+              }
+              if ($auto_type_holder.qualifier)
+                Swig_error(cparse_file, cparse_line, "Function %s with a trailing return type cannot have a qualifier on 'auto'.\n", Swig_name_decl($$));
+              if ($declarator.explicit_object_parm)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
 	      if (!$c_decl_tail) {
 		if (Len(scanner_ccode)) {
 		  String *code = Copy(scanner_ccode);
@@ -3777,7 +4177,7 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      } else {
 		Node *n = $c_decl_tail;
 		while (n) {
-		  String *type = Copy($cpp_alternate_rettype);
+                  String *type = Copy($trailing_rettype);
 		  Setattr(n,"type",type);
 		  Setattr(n,"storage",$storage_class);
 		  n = nextSibling(n);
@@ -3800,68 +4200,6 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		  }
 		  Delete(p);
 		} else if (Strncmp($declarator.id, "::", 2) == 0) {
-		  Delete($$);
-		  $$ = $c_decl_tail;
-		}
-	      } else {
-		set_nextSibling($$, $c_decl_tail);
-	      }
-
-	      if ($cpp_const.qualifier && $storage_class && Strstr($storage_class, "static"))
-		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
-              /* Promote any 'auto' / 'Concept auto' parm to an invented type template parameter. */
-              if ($$) promote_abbreviated_template($$);
-	      Delete($storage_class);
-           }
-           /* Alternate function syntax introduced in C++11:
-              auto funcName(int x, int y) -> int; */
-           | storage_class AUTO declarator cpp_const ARROW cpp_alternate_rettype virt_specifier_seq_opt initializer c_decl_tail {
-              $$ = new_node("cdecl");
-	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
-	      Setattr($$,"refqualifier",$cpp_const.refqualifier);
-	      Setattr($$,"type",$cpp_alternate_rettype);
-	      Setattr($$,"storage",$storage_class);
-	      Setattr($$,"name",$declarator.id);
-	      Setattr($$,"decl",$declarator.type);
-	      Setattr($$,"parms",$declarator.parms);
-	      Setattr($$,"throws",$cpp_const.throws);
-	      Setattr($$,"throw",$cpp_const.throwf);
-	      Setattr($$,"noexcept",$cpp_const.nexcept);
-	      Setattr($$,"final",$cpp_const.final);
-	      if (!$c_decl_tail) {
-		if (Len(scanner_ccode)) {
-		  String *code = Copy(scanner_ccode);
-		  Setattr($$,"code",code);
-		  Delete(code);
-		}
-	      } else {
-		Node *n = $c_decl_tail;
-		while (n) {
-		  String *type = Copy($cpp_alternate_rettype);
-		  Setattr(n,"type",type);
-		  Setattr(n,"storage",$storage_class);
-		  n = nextSibling(n);
-		  Delete(type);
-		}
-	      }
-
-	      if ($declarator.id) {
-		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
-		String *p = Swig_scopename_prefix($declarator.id);
-		if (p) {
-		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
-		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
-		    String *lstr = Swig_scopename_last($declarator.id);
-		    Setattr($$,"name",lstr);
-		    Delete(lstr);
-		    set_nextSibling($$, $c_decl_tail);
-		  } else {
-		    Delete($$);
-		    $$ = $c_decl_tail;
-		  }
-		  Delete(p);
-		} else if (Strncmp($declarator.id, "::", 2) == 0) {
-		  /* global scope declaration/definition ignored */
 		  Delete($$);
 		  $$ = $c_decl_tail;
 		}
@@ -3881,14 +4219,36 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
             * can be wrapped.  This also means you can provide declaration
             * with an explicit return type in the interface file for SWIG
             * to wrap.
+            *
+            * The braces are a braced initialiser rather than a function body when the declarator is not a
+            * function declarator, as in the C++11 variable declaration 'auto v{42};'.  A single element braced
+            * initialiser deduces the type of that element from C++17 onwards, which is also what the compilers
+            * that implement N3922 do for C++11 and C++14.
             */
-	   | storage_class AUTO declarator cpp_const LBRACE {
+           | storage_class auto_type_holder declarator cpp_const LBRACE {
+              int braced_initialiser = !SwigType_isfunction($declarator.type);
 	      if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 
               $$ = new_node("cdecl");
 	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$, "refqualifier", $cpp_const.refqualifier);
-	      Setattr($$, "type", NewString("auto"));
+              if (braced_initialiser) {
+                struct Define dtype = default_dtype;
+                SwigType *type;
+                dtype.val = braced_initialiser_value(scanner_ccode);
+                dtype.type = literal_type_code(dtype.val);
+                type = auto_variable_type(&dtype, $declarator.type, $auto_type_holder.qualifier, $auto_type_holder.isdecltypeauto);
+                if (!type)
+                  type = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
+                Setattr($$, "type", type);
+                Setattr($$, "valuetype", type);
+                if (Len(dtype.val) > 0)
+                  Setattr($$, "value", dtype.val);
+                Delete(dtype.val);
+                Delete(type);
+              } else {
+                set_auto_type($$, $auto_type_holder.qualifier, $auto_type_holder.conceptid);
+              }
 	      Setattr($$, "storage", $storage_class);
 	      Setattr($$, "name", $declarator.id);
 	      Setattr($$, "decl", $declarator.type);
@@ -3897,6 +4257,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "throw", $cpp_const.throwf);
 	      Setattr($$, "noexcept", $cpp_const.nexcept);
 	      Setattr($$, "final", $cpp_const.final);
+              if ($declarator.explicit_object_parm)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
 
 	      if ($declarator.id) {
 		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
@@ -3914,54 +4276,6 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		  Delete(p);
 		} else if (Strncmp($declarator.id, "::", 2) == 0) {
 		  /* global scope declaration/definition ignored */
-		  Delete($$);
-		  $$ = 0;
-		}
-	      }
-
-	      if ($cpp_const.qualifier && $storage_class && Strstr($storage_class, "static"))
-		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
-	      Delete($storage_class);
-	   }
-	   /* C++20 abbreviated function template with a constrained auto return type,
-	    * e.g. 'Numeric auto fn(int x) { return x; }'.  Parses identically to the plain
-	    * 'auto' return form above and inherits the same warn and ignore behaviour when
-	    * SWIG cannot deduce the return type; the concept-id is preserved on the
-	    * 'constraint' attribute as a 'concept-id' atom for downstream inspection. */
-	   | storage_class idcolon AUTO declarator cpp_const LBRACE {
-	      Node *atom;
-	      if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
-
-              $$ = new_node("cdecl");
-	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
-	      Setattr($$, "refqualifier", $cpp_const.refqualifier);
-	      Setattr($$, "type", NewString("auto"));
-	      Setattr($$, "storage", $storage_class);
-	      Setattr($$, "name", $declarator.id);
-	      Setattr($$, "decl", $declarator.type);
-	      Setattr($$, "parms", $declarator.parms);
-	      Setattr($$, "throws", $cpp_const.throws);
-	      Setattr($$, "throw", $cpp_const.throwf);
-	      Setattr($$, "noexcept", $cpp_const.nexcept);
-	      Setattr($$, "final", $cpp_const.final);
-	      atom = Constraint_new_atom("concept-id");
-	      Setattr(atom, "type", $idcolon);
-	      Setattr($$, "constraint", atom);
-
-	      if ($declarator.id) {
-		String *p = Swig_scopename_prefix($declarator.id);
-		if (p) {
-		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
-		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
-		    String *lstr = Swig_scopename_last($declarator.id);
-		    Setattr($$, "name", lstr);
-		    Delete(lstr);
-		  } else {
-		    Delete($$);
-		    $$ = 0;
-		  }
-		  Delete(p);
-		} else if (Strncmp($declarator.id, "::", 2) == 0) {
 		  Delete($$);
 		  $$ = 0;
 		}
@@ -3975,11 +4289,11 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	   // definition.  A C++ compiler will deduce the return type when it
 	   // sees the corresponding definition, but SWIG may never see that
 	   // definition.
-	   | storage_class AUTO declarator cpp_const SEMI {
+           | storage_class auto_type_holder declarator cpp_const SEMI {
 	      $$ = new_node("cdecl");
 	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$, "refqualifier", $cpp_const.refqualifier);
-	      Setattr($$, "type", NewString("auto"));
+              set_auto_type($$, $auto_type_holder.qualifier, $auto_type_holder.conceptid);
 	      Setattr($$, "storage", $storage_class);
 	      Setattr($$, "name", $declarator.id);
 	      Setattr($$, "decl", $declarator.type);
@@ -3988,6 +4302,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "throw", $cpp_const.throwf);
 	      Setattr($$, "noexcept", $cpp_const.nexcept);
 	      Setattr($$, "final", $cpp_const.final);
+              if ($declarator.explicit_object_parm)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
 
 	      if ($declarator.id) {
 		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
@@ -4014,88 +4330,104 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
 	      Delete($storage_class);
 	   }
-	   /* C++20 abbreviated function template with a constrained auto return type,
-	    * declaration form, e.g. 'Numeric auto fn(int x);'.  Inherits the same warn and ignore
-	    * behaviour as the plain 'auto fn(...)' declaration above. */
-	   | storage_class idcolon AUTO declarator cpp_const SEMI {
-	      Node *atom;
-	      $$ = new_node("cdecl");
-	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
-	      Setattr($$, "refqualifier", $cpp_const.refqualifier);
-	      Setattr($$, "type", NewString("auto"));
-	      Setattr($$, "storage", $storage_class);
-	      Setattr($$, "name", $declarator.id);
-	      Setattr($$, "decl", $declarator.type);
-	      Setattr($$, "parms", $declarator.parms);
-	      Setattr($$, "throws", $cpp_const.throws);
-	      Setattr($$, "throw", $cpp_const.throwf);
-	      Setattr($$, "noexcept", $cpp_const.nexcept);
-	      Setattr($$, "final", $cpp_const.final);
-	      atom = Constraint_new_atom("concept-id");
-	      Setattr(atom, "type", $idcolon);
-	      Setattr($$, "constraint", atom);
+           /* C++11 auto variable declaration.  The declarator carries any '&', '&&', '*' and cv-qualifiers applied
+              to the placeholder, so 'auto&& r = 42;' has type 'int' and decl 'z.'.  A cv-qualifier on the
+              placeholder itself is kept on the deduced type, so 'const auto x = 42;' has type 'q(const).int'.
 
-	      if ($declarator.id) {
-		String *p = Swig_scopename_prefix($declarator.id);
-		if (p) {
-		  if ((Namespaceprefix && Strcmp(p, Namespaceprefix) == 0) ||
-		      (Classprefix && Strcmp(p, Classprefix) == 0)) {
-		    String *lstr = Swig_scopename_last($declarator.id);
-		    Setattr($$, "name", lstr);
-		    Delete(lstr);
-		  } else {
-		    Delete($$);
-		    $$ = 0;
-		  }
-		  Delete(p);
-		} else if (Strncmp($declarator.id, "::", 2) == 0) {
-		  Delete($$);
-		  $$ = 0;
-		}
-	      }
-
-	      if ($cpp_const.qualifier && $storage_class && Strstr($storage_class, "static"))
-		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
-	      Delete($storage_class);
-	   }
-	   /* C++11 auto variable declaration. */
-	   | storage_class AUTO idcolon EQUAL definetype SEMI {
-	      SwigType *type = deduce_type(&$definetype);
-	      if (!type)
-		type = NewString("auto");
+              The same rule takes a function declarator, which is how the C++20 defaulted comparison operator
+              'auto operator<=>(const S&) const = default;' and the deleted function 'auto m() = delete;' are
+              parsed.  A cv-qualifier or noexcept-specifier there belongs to the function, not the placeholder. */
+           | storage_class auto_type_holder declarator cpp_const EQUAL definetype auto_decl_tail {
 	      $$ = new_node("cdecl");
-	      Setattr($$, "type", type);
 	      Setattr($$, "storage", $storage_class);
-	      Setattr($$, "name", $idcolon);
-	      Setattr($$, "decl", NewStringEmpty());
+              Setattr($$, "name", $declarator.id);
+              Setattr($$, "decl", $declarator.type);
 	      Setattr($$, "value", $definetype.val);
 	      if ($definetype.stringval) Setattr($$, "stringval", $definetype.stringval);
 	      if ($definetype.numval) Setattr($$, "numval", $definetype.numval);
-	      Setattr($$, "valuetype", type);
+              Setattr($$, "refqualifier", $cpp_const.refqualifier);
+              Setattr($$, "throws", $cpp_const.throws);
+              Setattr($$, "throw", $cpp_const.throwf);
+              Setattr($$, "noexcept", $cpp_const.nexcept);
+              Setattr($$, "final", $cpp_const.final);
+              if ($cpp_const.constraint_node)
+                Setattr($$, "constraint", $cpp_const.constraint_node);
+              /* Each declarator of a declaration declaring more than one variable keeps its own decoration and its
+               * own initialiser, so the 'p' of 'auto x = 1, *p = &g;' is an 'int *', but they all share the one
+               * type deduced for the placeholder. */
+              if ($auto_decl_tail) {
+                Node *n;
+                for (n = $auto_decl_tail; n; n = nextSibling(n))
+                  Setattr(n, "storage", $storage_class);
+                set_nextSibling($$, $auto_decl_tail);
+              }
+              set_auto_variable_types($$, &$definetype, $auto_type_holder.qualifier, $auto_type_holder.conceptid, $auto_type_holder.isdecltypeauto);
+              /* The cv-qualifier is added to the declarator only once the types have been deduced: a function
+               * declarator is what says this is a function rather than a variable, and the qualifier hides it. */
+              if ($cpp_const.qualifier)
+                SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Delete($storage_class);
-	      Delete(type);
 	   }
 	   /* C++11 auto variable declaration for which we can't parse the initialiser. */
-	   | storage_class AUTO idcolon EQUAL error SEMI {
-	      SwigType *type = NewString("auto");
+           | storage_class auto_type_holder declarator cpp_const EQUAL error SEMI {
+              SwigType *type = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
 	      $$ = new_node("cdecl");
+              if ($cpp_const.qualifier)
+                SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$, "type", type);
 	      Setattr($$, "storage", $storage_class);
-	      Setattr($$, "name", $idcolon);
-	      Setattr($$, "decl", NewStringEmpty());
+              Setattr($$, "name", $declarator.id);
+              Setattr($$, "decl", $declarator.type);
+              Setattr($$, "refqualifier", $cpp_const.refqualifier);
 	      Setattr($$, "valuetype", type);
 	      Delete($storage_class);
 	      Delete(type);
 	   }
+           /* C++17 structured binding, such as 'auto [a, b] = pt;'.  The names are bound to the members of the
+              initialiser, which SWIG would have to know the layout of to give each name a type, so the whole
+              declaration is parsed and ignored with a warning. */
+           | storage_class auto_type_holder structured_binding_ref LBRACKET structured_binding_names RBRACKET EQUAL definetype SEMI {
+              $$ = 0;
+              Swig_warning(WARN_CPP17_STRUCTURED_BINDING, cparse_file, cparse_line, "Structured binding '%s' is not supported (ignored).\n",
+                  $structured_binding_names);
+              Delete($storage_class);
+              Delete($structured_binding_names);
+           }
+           /* A structured binding whose initialiser SWIG cannot parse, such as the 'Pt{1, 2}' of
+              'auto&& [a, b] = Pt{1, 2};'. */
+           | storage_class auto_type_holder structured_binding_ref LBRACKET structured_binding_names RBRACKET EQUAL error SEMI {
+              $$ = 0;
+              Swig_warning(WARN_CPP17_STRUCTURED_BINDING, cparse_file, cparse_line, "Structured binding '%s' is not supported (ignored).\n",
+                  $structured_binding_names);
+              Delete($storage_class);
+              Delete($structured_binding_names);
+           }
 	   ;
+
+/* The reference decoration a structured binding may carry, as in 'auto& [a, b]' and 'auto&& [a, b]'.  A cv-qualifier
+   is part of the placeholder itself and so is matched by auto_type_holder. */
+structured_binding_ref : %empty
+           | AND
+           | LAND
+           ;
+
+/* The identifier list of a structured binding, kept as written for the warning that reports it ignored. */
+structured_binding_names : ID {
+              $$ = NewString($ID);
+           }
+           | structured_binding_names[in] COMMA ID {
+              $$ = $in;
+              Printf($$, ", %s", $ID);
+           }
+           ;
 
 /* Allow lists of variables and functions to be built up */
 
-c_decl_tail    : SEMI { 
-                   $$ = 0;
-                   Clear(scanner_ccode); 
-               }
-               | COMMA declarator cpp_const initializer c_decl_tail[in] {
+/* The declarators following the first one in a declaration that declares more than one, such as the ', y = 2'
+   of 'int x = 1, y = 2;'.  Split out of c_decl_tail so that the C++11 'auto' variable declaration can reuse it
+   without also reaching c_decl_tail's error alternative, which turns an initialiser SWIG cannot parse into a
+   fatal error rather than into the ignored declaration an 'auto' variable gets. */
+c_decl_list_tail : COMMA declarator cpp_const initializer c_decl_tail[in] {
 		 $$ = new_node("cdecl");
 		 if ($cpp_const.qualifier) SwigType_push($declarator.type,$cpp_const.qualifier);
 		 Setattr($$,"refqualifier",$cpp_const.refqualifier);
@@ -4122,6 +4454,13 @@ c_decl_tail    : SEMI {
 		   set_nextSibling($$, $in);
 		 }
 	       }
+                 ;
+
+c_decl_tail    : SEMI { 
+                   $$ = 0;
+                   Clear(scanner_ccode); 
+               }
+               | c_decl_list_tail
                | LBRACE { 
                    if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
                    $$ = 0;
@@ -4137,6 +4476,15 @@ c_decl_tail    : SEMI {
                }
               ;
 
+/* The end of a C++11 'auto' variable declaration: the semicolon, or the remaining declarators when the
+   declaration declares more than one variable. */
+auto_decl_tail : SEMI {
+                   $$ = 0;
+                   Clear(scanner_ccode);
+               }
+               | c_decl_list_tail
+               ;
+
 initializer   : def_args
 	      | COLON expr {
 		$$ = default_dtype;
@@ -4144,13 +4492,83 @@ initializer   : def_args
 	      }
               ;
 
-cpp_alternate_rettype : primitive_type
+/* Every spelling of the 'auto' placeholder: plain, cv-qualified in either order, and with a C++20 type-constraint,
+   e.g. 'auto', 'const auto', 'auto const', 'Numeric auto', 'const Numeric auto', 'Numeric auto const'.  AUTO is
+   deliberately not an alternative of type_right as it would collide with the declarator that follows the placeholder,
+   so the placeholder gets a rule of its own which every use site shares.  The cv-qualifier orderings are equivalent
+   and produce the same type. */
+auto_type_holder : AUTO {
+                   $$.qualifier = 0;
+                   $$.conceptid = 0;
+                   $$.isdecltypeauto = 0;
+                 }
+                 | type_qualifier AUTO {
+                   $$.qualifier = $type_qualifier;
+                   $$.conceptid = 0;
+                   $$.isdecltypeauto = 0;
+                 }
+                 | AUTO type_qualifier {
+                   $$.qualifier = $type_qualifier;
+                   $$.conceptid = 0;
+                   $$.isdecltypeauto = 0;
+                 }
+                 | idcolon AUTO {
+                   $$.qualifier = 0;
+                   $$.conceptid = $idcolon;
+                   $$.isdecltypeauto = 0;
+                 }
+                 | type_qualifier idcolon AUTO {
+                   $$.qualifier = $type_qualifier;
+                   $$.conceptid = $idcolon;
+                   $$.isdecltypeauto = 0;
+                 }
+                 | idcolon AUTO type_qualifier {
+                   $$.qualifier = $type_qualifier;
+                   $$.conceptid = $idcolon;
+                   $$.isdecltypeauto = 0;
+                 }
+                 | decltype_prefix AUTO RPAREN {
+                   Delete($decltype_prefix);
+                   $$.qualifier = 0;
+                   $$.conceptid = 0;
+                   $$.isdecltypeauto = 1;
+                 }
+                 ;
+
+/* The trailing return type of a function declared with the C++11 alternate function syntax is a type-id, that is any
+   type followed by an optional abstract declarator, so 'int', 'const Pt *', 'int &', 'int (*)(int)' and 'int (&)[3]'
+   are all valid here.  The abstract declarator used is the one without the pointer to member alternatives, for the
+   reason given where abstract_declarator is split below, so SWIG requires a pointer to member return type to be
+   written with parentheses, 'auto member() -> int (S::*);'.  That spelling works because the parentheses are a
+   direct_abstract_declarator, inside which the full abstract_declarator is reachable again.  C++ accepts the
+   unparenthesised 'auto member() -> int S::*;' as well, but SWIG does not. */
+cpp_alternate_rettype : type
+              | type abstract_declarator_no_memberpointer[abstract_declarator] {
+                $$ = $type;
+                SwigType_push($$, $abstract_declarator.type);
+                Delete($abstract_declarator.type);
+              }
+              ;
+
+/* The return type in an explicit instantiation of a function template, such as 'template int max<int>(int, int);',
+   matched by 'TEMPLATE explicit_instantiation_rettype idcolon LPAREN parms RPAREN' in cpp_template_decl below.
+   The types are enumerated by hand instead of using 'type' because of the neighbouring rule for an explicit
+   instantiation of a class template, 'TEMPLATE cpptype idcolon', such as 'template class Foo<int>;'.  The 'type'
+   nonterminal matches 'class Foo<int>' too, through the 'cpptype idcolon' alternative of type_right, so having read
+   'template class Foo<int>' the parser would have to choose, on one token of lookahead, between reducing a finished
+   class template instantiation and carrying on with a function template instantiation whose return type happens to
+   be 'class Foo<int>', as in 'template class Foo<int> make<int>(int);'.  Both are valid C++ and a lookahead such as
+   ID fits either, so using 'type' here gives 16 reduce/reduce conflicts, 8 in the TEMPLATE state and 8 in the
+   EXTERN TEMPLATE one.  The enumeration below therefore leaves out the elaborated 'cpptype idcolon' form, which is
+   what keeps the two TEMPLATE productions apart; the 'enum E' form stays, there being no class template
+   instantiation rule for an enum.  The type is discarded, the whole declaration being ignored with a warning. */
+explicit_instantiation_rettype : primitive_type
               | TYPE_BOOL
               | TYPE_VOID
-	      | c_enum_key idcolon {
-		$$ = $idcolon;
-		Insert($$, 0, "enum ");
-	      }
+              | c_enum_key idcolon {
+                $$ = $idcolon;
+                Insert($$, 0, "enum ");
+              }
               | idcolon { $$ = $idcolon; }
               | idcolon AND {
                 $$ = $idcolon;
@@ -4180,26 +4598,56 @@ cpp_alternate_rettype : primitive_type
    auto myFunc = [](int x, int y) -> int { return x+y; };
    auto myFunc = [](int x, int y) throw() -> int { return x+y; };
    auto six = [](int x, int y) { return x+y; }(4, 2);
+   auto&& myFunc = [](int x) { return x; };
+
+   The declarator is shared with the C++11 'auto' variable declaration in c_decl: both rules have the same
+   'storage_class auto_type_holder declarator cpp_const EQUAL' prefix, so each part of it has to be the same
+   nonterminal in each.  The cpp_const is always empty for a lambda, a variable declarator not being able to
+   carry a cv-qualifier, but it is what the declaration of a defaulted or deleted function uses, and the two
+   cannot be told apart until the token after the '='.
    ------------------------------------------------------------ */
-cpp_lambda_decl : storage_class AUTO idcolon EQUAL lambda_introducer lambda_template requires_clause_opt LPAREN parms RPAREN cpp_const lambda_body lambda_tail {
+cpp_lambda_decl : storage_class auto_type_holder declarator cpp_const[unused] EQUAL lambda_introducer lambda_template requires_clause_opt lambda_parms cpp_const lambda_body lambda_tail {
 		  $$ = new_node("lambda");
-		  Setattr($$,"name",$idcolon);
+                  Setattr($$,"name",$declarator.id);
 		  Delete($storage_class);
 		  add_symbols($$);
 	        }
-                | storage_class AUTO idcolon EQUAL lambda_introducer lambda_template requires_clause_opt LPAREN parms RPAREN cpp_const ARROW type requires_clause_opt lambda_body lambda_tail {
+                | storage_class auto_type_holder declarator cpp_const[unused] EQUAL lambda_introducer lambda_template requires_clause_opt lambda_parms cpp_const ARROW trailing_rettype requires_clause_opt lambda_body lambda_tail {
 		  $$ = new_node("lambda");
-		  Setattr($$,"name",$idcolon);
+                  Setattr($$,"name",$declarator.id);
 		  Delete($storage_class);
+                  Delete($trailing_rettype);
 		  add_symbols($$);
 		}
-                | storage_class AUTO idcolon EQUAL lambda_introducer lambda_template requires_clause_opt lambda_body lambda_tail {
+                | storage_class auto_type_holder declarator cpp_const[unused] EQUAL lambda_introducer lambda_template requires_clause_opt lambda_body lambda_tail {
 		  $$ = new_node("lambda");
-		  Setattr($$,"name",$idcolon);
+                  Setattr($$,"name",$declarator.id);
 		  Delete($storage_class);
 		  add_symbols($$);
 		}
                 ;
+
+/* A lambda's parameter list, which C++23 allows to start with an explicit object parameter.  A lambda is wrapped
+   as an opaque object, so the parameters are only parsed, never used. */
+lambda_parms : LPAREN parms RPAREN
+             | LPAREN THIS parms RPAREN
+             ;
+
+/* An explicit trailing return type, shared by a function and a lambda.  As well as any type-id, C++ allows it to be
+   a placeholder, either the 'auto' of C++11 or the 'decltype(auto)' of C++14, the return type then being deduced
+   from the body just as it is when the trailing return type is left out altogether.  The placeholder is not reachable
+   through cpp_alternate_rettype because a deduced return type is ill-formed in the alias declaration that also uses
+   it, so the two alternatives are kept here. */
+trailing_rettype : cpp_alternate_rettype
+             | auto_type_holder {
+               $$ = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
+             }
+             | auto_type_holder abstract_declarator_no_memberpointer[abstract_declarator] {
+               $$ = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
+               SwigType_push($$, $abstract_declarator.type);
+               Delete($abstract_declarator.type);
+             }
+             ;
 
 lambda_introducer : LBRACKET {
 		  if (skip_balanced('[',']') < 0) Exit(EXIT_FAILURE);
@@ -5185,7 +5633,7 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
 		}
 
 		/* Function template explicit instantiation definition */
-		| TEMPLATE cpp_alternate_rettype idcolon LPAREN parms RPAREN {
+                | TEMPLATE explicit_instantiation_rettype idcolon LPAREN parms RPAREN {
 			Swig_warning(WARN_PARSE_EXPLICIT_TEMPLATE, cparse_file, cparse_line, "Explicit template instantiation ignored.\n");
                   $$ = 0; 
 		}
@@ -5197,7 +5645,7 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
                 }
 
 		/* Function template explicit instantiation declaration (extern template) */
-		| EXTERN TEMPLATE cpp_alternate_rettype idcolon LPAREN parms RPAREN {
+                | EXTERN TEMPLATE explicit_instantiation_rettype idcolon LPAREN parms RPAREN {
 			Swig_warning(WARN_PARSE_EXTERN_TEMPLATE, cparse_file, cparse_line, "Extern template ignored.\n");
                   $$ = 0; 
 		}
@@ -5221,12 +5669,37 @@ cpp_template_possible:  c_decl
    The wrapping cpp_template_decl rule converts the resulting node to a
    "template" node with templatetype "concept", and registers it in the symbol
    table.  The constraint subtree is stored in the "constraint" attribute.
+
+   A constraint-expression is any logical-or-expression, so it is not always a
+   chain of concept-ids, parenthesised primaries and requires-expressions, which
+   is all the constraint subgrammar models, e.g. "concept C = sizeof(T) > 0;".
+   The body text is therefore captured before parsing it, and kept as a single
+   opaque expression atom when the structural parse does not work out.
    ------------------------------------------------------------ */
-cpp_concept_decl : CONCEPT idcolon EQUAL constraint SEMI {
+cpp_concept_decl : CONCEPT idcolon EQUAL <str>{
+                  $$ = get_raw_text_to_semicolon();
+                }[body] concept_constraint SEMI {
                   $$ = new_node("concept");
                   Setattr($$, "name", $idcolon);
                   Setattr($$, "type", NewString("bool"));
-                  Setattr($$, "constraint", $constraint);
+                  if ($concept_constraint) {
+                    Setattr($$, "constraint", $concept_constraint);
+                  } else if ($body) {
+                    Node *atom = Constraint_new_atom("expression");
+                    Swig_cparse_trim_whitespace($body);
+                    Setattr(atom, "value", $body);
+                    Setattr($$, "constraint", atom);
+                    Delete(atom);
+                  }
+                  Delete($body);
+                }
+                ;
+
+concept_constraint : constraint
+                | error {
+                  /* Constraint-expression the constraint subgrammar cannot model - the concept
+                   * declaration rule above keeps the captured body text instead. */
+                  $$ = 0;
                 }
                 ;
 
@@ -5873,6 +6346,30 @@ cpp_conversion_operator : storage_class CONVERSIONOPERATOR type pointer LPAREN p
 		Delete($CONVERSIONOPERATOR);
 		Delete($storage_class);
               }
+              /* C++14 conversion function with a deduced return type: 'operator auto()' or 'operator decltype(auto)()'.
+               * SWIG cannot deduce the type from the body, so the placeholder is kept as the type and add_symbols()
+               * then reports it the same way as any other function with an undeduced 'auto' return type. */
+              | storage_class CONVERSIONOPERATOR auto_type_holder LPAREN parms RPAREN cpp_vend {
+                SwigType *t = NewStringEmpty();
+                $$ = new_node("cdecl");
+                set_auto_type($$, $auto_type_holder.qualifier, $auto_type_holder.conceptid);
+                SetFlag($$, "autodeducefrombody");
+                Setattr($$, "name", $CONVERSIONOPERATOR);
+                Setattr($$, "storage", $storage_class);
+                SwigType_add_function(t, $parms);
+                if ($cpp_vend.qualifier)
+                  SwigType_push(t, $cpp_vend.qualifier);
+                if ($cpp_vend.val)
+                  Setattr($$, "value", $cpp_vend.val);
+                Setattr($$, "refqualifier", $cpp_vend.refqualifier);
+                Setattr($$, "decl", t);
+                Setattr($$, "parms", $parms);
+                Setattr($$, "conversion_operator", "1");
+                add_symbols($$);
+                Delete(t);
+                Delete($CONVERSIONOPERATOR);
+                Delete($storage_class);
+              }
               ;
 
 /* isolated catch clause. */
@@ -6096,10 +6593,10 @@ parm_no_dox	: rawtype parameter_declarator {
 		   if ($parameter_declarator.numdefarg)
 		     Setattr($$, "numval", $parameter_declarator.numdefarg);
 		}
-                | AUTO parameter_declarator {
-                   /* C++14 generic lambda / C++20 abbreviated function template parm, e.g. 'auto x'.  Placed in parm_no_dox
-                    * rather than type_right so it does not collide with the 'storage_class AUTO declarator ...' rules. */
-                   SwigType *t = NewString("auto");
+                | auto_type_holder parameter_declarator {
+                   /* C++14 generic lambda parm or C++20 abbreviated function template parm, in any of the placeholder
+                    * spellings, e.g. 'auto x', 'const auto& x', 'auto const& x', 'Numeric auto x', 'const Numeric auto& x'. */
+                   SwigType *t = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
                    SwigType_push(t, $parameter_declarator.type);
                    $$ = NewParmWithoutFileLineInfo(t, $parameter_declarator.id);
                    Setfile($$, cparse_file);
@@ -6111,52 +6608,19 @@ parm_no_dox	: rawtype parameter_declarator {
                    if ($parameter_declarator.numdefarg)
                      Setattr($$, "numval", $parameter_declarator.numdefarg);
                 }
-                | idcolon AUTO parameter_declarator {
-                   /* C++20 abbreviated function template with concept type-constraint, e.g. 'Numeric auto x'. */
-                   SwigType *t = NewStringf("c(%s)", $idcolon);
-                   SwigType_push(t, "auto.");
+                | auto_type_holder ELLIPSIS parameter_declarator {
+                   /* C++20 abbreviated function template parameter pack written with an undecorated placeholder,
+                    * e.g. 'auto... args', 'auto...', 'Numeric auto... args'.  A decorated placeholder such as
+                    * 'auto&&... args' or 'auto*... args' is matched by the rule above instead, the ellipsis being
+                    * part of the declarator there.  The undecorated spelling needs its own rule because nothing
+                    * follows the placeholder for the declarator to start with, which makes the ellipsis look like
+                    * the one ending a C style variadic parameter list. */
+                   SwigType *t = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
+                   SwigType_add_variadic(t);
                    SwigType_push(t, $parameter_declarator.type);
                    $$ = NewParmWithoutFileLineInfo(t, $parameter_declarator.id);
                    Setfile($$, cparse_file);
                    Setline($$, cparse_line);
-                   if ($parameter_declarator.defarg)
-                     Setattr($$, "value", $parameter_declarator.defarg);
-                   if ($parameter_declarator.stringdefarg)
-                     Setattr($$, "stringval", $parameter_declarator.stringdefarg);
-                   if ($parameter_declarator.numdefarg)
-                     Setattr($$, "numval", $parameter_declarator.numdefarg);
-                }
-                | type_qualifier AUTO parameter_declarator {
-                   /* C++20 abbreviated function template with a CV-qualifier on the auto placeholder, e.g.
-                    * 'const auto x', 'const auto& x', 'volatile auto* x'. */
-                   SwigType *t = NewString("auto");
-                   SwigType_push(t, $type_qualifier);
-                   SwigType_push(t, $parameter_declarator.type);
-                   $$ = NewParmWithoutFileLineInfo(t, $parameter_declarator.id);
-                   Setfile($$, cparse_file);
-                   Setline($$, cparse_line);
-                   if ($parameter_declarator.defarg)
-                     Setattr($$, "value", $parameter_declarator.defarg);
-                   if ($parameter_declarator.stringdefarg)
-                     Setattr($$, "stringval", $parameter_declarator.stringdefarg);
-                   if ($parameter_declarator.numdefarg)
-                     Setattr($$, "numval", $parameter_declarator.numdefarg);
-                }
-                | type_qualifier idcolon AUTO parameter_declarator {
-                   /* C++20 abbreviated function template with a CV-qualified type-constraint, e.g. 'const Numeric auto& x'. */
-                   SwigType *t = NewStringf("c(%s)", $idcolon);
-                   SwigType_push(t, "auto.");
-                   SwigType_push(t, $type_qualifier);
-                   SwigType_push(t, $parameter_declarator.type);
-                   $$ = NewParmWithoutFileLineInfo(t, $parameter_declarator.id);
-                   Setfile($$, cparse_file);
-                   Setline($$, cparse_line);
-                   if ($parameter_declarator.defarg)
-                     Setattr($$, "value", $parameter_declarator.defarg);
-                   if ($parameter_declarator.stringdefarg)
-                     Setattr($$, "stringval", $parameter_declarator.stringdefarg);
-                   if ($parameter_declarator.numdefarg)
-                     Setattr($$, "numval", $parameter_declarator.numdefarg);
                 }
                 | ELLIPSIS {
 		  SwigType *t = NewString("v(...)");
@@ -6282,25 +6746,14 @@ parameter_declarator : declarator def_args {
 	    /* Member function pointers with qualifiers. eg.
 	      int f(short (Funcs::*parm)(bool) const); */
 	    | direct_declarator LPAREN parms RPAREN qualifiers_exception_specification {
-	      SwigType *t;
-	      $$ = $direct_declarator;
-	      t = NewStringEmpty();
-	      SwigType_add_function(t,$parms);
-	      if ($qualifiers_exception_specification.qualifier)
-		SwigType_push(t, $qualifiers_exception_specification.qualifier);
-	      if ($qualifiers_exception_specification.nexcept)
-		SwigType_add_qualifier(t, "noexcept");
-	      if (!$$.have_parms) {
-		$$.parms = $parms;
-		$$.have_parms = 1;
-	      }
-	      if (!$$.type) {
-		$$.type = t;
-	      } else {
-		SwigType_push(t, $$.type);
-		Delete($$.type);
-		$$.type = t;
-	      }
+              SwigType *qualifier = $qualifiers_exception_specification.qualifier;
+              if ($qualifiers_exception_specification.nexcept) {
+                if (!qualifier)
+                  qualifier = NewStringEmpty();
+                SwigType_add_qualifier(qualifier, "noexcept");
+              }
+              $$ = $direct_declarator;
+              declarator_add_function(&$$, $parms, qualifier);
 	    }
             ;
 
@@ -6341,23 +6794,8 @@ plain_declarator : declarator {
 	    /* Member function pointers with qualifiers. eg.
 	      int f(short (Funcs::*parm)(bool) const) */
 	    | direct_declarator LPAREN parms RPAREN cv_ref_qualifier {
-	      SwigType *t;
-	      $$ = $direct_declarator;
-	      t = NewStringEmpty();
-	      SwigType_add_function(t, $parms);
-	      if ($cv_ref_qualifier.qualifier)
-	        SwigType_push(t, $cv_ref_qualifier.qualifier);
-	      if (!$$.have_parms) {
-		$$.parms = $parms;
-		$$.have_parms = 1;
-	      }
-	      if (!$$.type) {
-		$$.type = t;
-	      } else {
-		SwigType_push(t, $$.type);
-		Delete($$.type);
-		$$.type = t;
-	      }
+              $$ = $direct_declarator;
+              declarator_add_function(&$$, $parms, $cv_ref_qualifier.qualifier);
 	    }
             | %empty {
 	      $$ = default_decl;
@@ -6650,22 +7088,14 @@ notso_direct_declarator : idcolon {
 		    $$.type = t;
                   }
                   | notso_direct_declarator[in] LPAREN parms RPAREN {
-		    SwigType *t;
                     $$ = $in;
-		    t = NewStringEmpty();
-		    SwigType_add_function(t,$parms);
-		    if (!$$.have_parms) {
-		      $$.parms = $parms;
-		      $$.have_parms = 1;
-		    }
-		    if (!$$.type) {
-		      $$.type = t;
-		    } else {
-		      SwigType_push(t, $$.type);
-		      Delete($$.type);
-		      $$.type = t;
-		    }
-		  }
+                    declarator_add_function(&$$, $parms, 0);
+                  }
+                  | notso_direct_declarator[in] LPAREN THIS parms RPAREN {
+                    $$ = $in;
+                    declarator_add_function(&$$, drop_explicit_object_parameter($parms), 0);
+                    $$.explicit_object_parm = 1;
+                  }
                   ;
 
 direct_declarator : idcolon {
@@ -6778,22 +7208,18 @@ direct_declarator : idcolon {
 		    $$.type = t;
                   }
                   | direct_declarator[in] LPAREN parms RPAREN {
-		    SwigType *t;
                     $$ = $in;
-		    t = NewStringEmpty();
-		    SwigType_add_function(t,$parms);
-		    if (!$$.have_parms) {
-		      $$.parms = $parms;
-		      $$.have_parms = 1;
-		    }
-		    if (!$$.type) {
-		      $$.type = t;
-		    } else {
-		      SwigType_push(t, $$.type);
-		      Delete($$.type);
-		      $$.type = t;
-		    }
-		  }
+                    declarator_add_function(&$$, $parms, 0);
+                  }
+                  /* C++23 explicit object parameter: 'this' declares the first parameter of a member function to be
+                   * the object the function is called on, in place of the implicit object parameter.  It is not one
+                   * of the function's arguments, so it is dropped from both the parameter list and the declarator and
+                   * the member function is wrapped with the arguments that follow it. */
+                  | direct_declarator[in] LPAREN THIS parms RPAREN {
+                    $$ = $in;
+                    declarator_add_function(&$$, drop_explicit_object_parameter($parms), 0);
+                    $$.explicit_object_parm = 1;
+                  }
                  /* User-defined string literals. eg.
                     int operator""_mySuffix(const char* val, int length) {...}
                     The whitespace form 'operator "" _suffix' is deprecated by CWG2521 (applied to
@@ -6801,18 +7227,47 @@ direct_declarator : idcolon {
 		 /* This produces one S/R conflict. */
                  | OPERATOR ID LPAREN parms RPAREN {
 		    $$ = default_decl;
-		    SwigType *t;
 		    Append($OPERATOR, $ID);
 		    $$.id = Char($OPERATOR);
-		    t = NewStringEmpty();
-		    SwigType_add_function(t,$parms);
-		    $$.parms = $parms;
-		    $$.have_parms = 1;
-		    $$.type = t;
+                    declarator_add_function(&$$, $parms, 0);
 		  }
                   ;
 
-abstract_declarator : pointer variadic_opt {
+/* An abstract declarator, split so that the alternatives starting with a pointer to member can be excluded where
+   they are ambiguous.  A pointer to member starts with a scope name, which can be spelt 'override' or 'final' as
+   those are contextual keywords, and that clashes with the virt-specifier ending a member function declaration. */
+abstract_declarator : abstract_declarator_no_memberpointer
+                  | idcolon DSTAR {
+                    $$ = default_decl;
+                    $$.type = NewStringEmpty();
+                    SwigType_add_memberpointer($$.type, $idcolon);
+                  }
+                  | idcolon DSTAR type_qualifier {
+                    $$ = default_decl;
+                    $$.type = NewStringEmpty();
+                    SwigType_add_memberpointer($$.type, $idcolon);
+                    SwigType_push($$.type, $type_qualifier);
+                  }
+                  | pointer idcolon DSTAR {
+                    SwigType *t = NewStringEmpty();
+                    $$ = default_decl;
+                    $$.type = $pointer;
+                    SwigType_add_memberpointer(t, $idcolon);
+                    SwigType_push($$.type, t);
+                    Delete(t);
+                  }
+                  | pointer idcolon DSTAR direct_abstract_declarator {
+                    $$ = $direct_abstract_declarator;
+                    SwigType_add_memberpointer($pointer, $idcolon);
+                    if ($$.type) {
+                      SwigType_push($pointer, $$.type);
+                      Delete($$.type);
+                    }
+                    $$.type = $pointer;
+                  }
+                  ;
+
+abstract_declarator_no_memberpointer : pointer variadic_opt {
 		    $$ = default_decl;
 		    $$.type = $pointer;
 		    if ($variadic_opt) SwigType_add_variadic($$.type);
@@ -6884,34 +7339,6 @@ abstract_declarator : pointer variadic_opt {
 		    SwigType_add_rvalue_reference($$.type);
 		    if ($variadic_opt) SwigType_add_variadic($$.type);
                   }
-                  | idcolon DSTAR { 
-		    $$ = default_decl;
-		    $$.type = NewStringEmpty();
-                    SwigType_add_memberpointer($$.type,$idcolon);
-      	          }
-                  | idcolon DSTAR type_qualifier {
-		    $$ = default_decl;
-		    $$.type = NewStringEmpty();
-		    SwigType_add_memberpointer($$.type, $idcolon);
-		    SwigType_push($$.type, $type_qualifier);
-		  }
-                  | pointer idcolon DSTAR { 
-		    $$ = default_decl;
-		    SwigType *t = NewStringEmpty();
-                    $$.type = $pointer;
-		    SwigType_add_memberpointer(t,$idcolon);
-		    SwigType_push($$.type,t);
-		    Delete(t);
-                  }
-                  | pointer idcolon DSTAR direct_abstract_declarator { 
-		    $$ = $direct_abstract_declarator;
-		    SwigType_add_memberpointer($pointer,$idcolon);
-		    if ($$.type) {
-		      SwigType_push($pointer,$$.type);
-		      Delete($$.type);
-		    }
-		    $$.type = $pointer;
-                  }
                   ;
 
 direct_abstract_declarator : direct_abstract_declarator[in] LBRACKET RBRACKET { 
@@ -6950,46 +7377,16 @@ direct_abstract_declarator : direct_abstract_declarator[in] LBRACKET RBRACKET {
                     $$ = $abstract_declarator;
 		  }
                   | direct_abstract_declarator[in] LPAREN parms RPAREN {
-		    SwigType *t;
                     $$ = $in;
-		    t = NewStringEmpty();
-                    SwigType_add_function(t,$parms);
-		    if (!$$.type) {
-		      $$.type = t;
-		    } else {
-		      SwigType_push(t,$$.type);
-		      Delete($$.type);
-		      $$.type = t;
-		    }
-		    if (!$$.have_parms) {
-		      $$.parms = $parms;
-		      $$.have_parms = 1;
-		    }
+                    declarator_add_function(&$$, $parms, 0);
 		  }
                   | direct_abstract_declarator[in] LPAREN parms RPAREN cv_ref_qualifier {
-		    SwigType *t;
                     $$ = $in;
-		    t = NewStringEmpty();
-                    SwigType_add_function(t,$parms);
-		    SwigType_push(t, $cv_ref_qualifier.qualifier);
-		    if (!$$.type) {
-		      $$.type = t;
-		    } else {
-		      SwigType_push(t,$$.type);
-		      Delete($$.type);
-		      $$.type = t;
-		    }
-		    if (!$$.have_parms) {
-		      $$.parms = $parms;
-		      $$.have_parms = 1;
-		    }
+                    declarator_add_function(&$$, $parms, $cv_ref_qualifier.qualifier);
 		  }
                   | LPAREN parms RPAREN {
 		    $$ = default_decl;
-                    $$.type = NewStringEmpty();
-                    SwigType_add_function($$.type,$parms);
-		    $$.parms = $parms;
-		    $$.have_parms = 1;
+                    declarator_add_function(&$$, $parms, 0);
                   }
                   ;
 
@@ -7098,9 +7495,16 @@ type_right     : primitive_type
                | decltype
                ;
 
-decltype       : DECLTYPE LPAREN <str>{
-		 $$ = get_raw_text_balanced('(', ')');
-	       }[expr] decltypeexpr {
+/* The 'decltype(' that opens both 'decltype(expr)' and the 'decltype(auto)' placeholder matched by
+   auto_type_holder.  The raw text of the operand is captured in this shared rule rather than in a mid-rule
+   action of either alternative: a mid-rule action would run only after the parser had looked ahead one token
+   to tell the two apart, and the captured text would then be missing the first token of the operand. */
+decltype_prefix : DECLTYPE LPAREN {
+                 $$ = get_raw_text_balanced('(', ')');
+               }
+               ;
+
+decltype       : decltype_prefix[expr] decltypeexpr {
 		 String *expr = $expr;
 		 if ($decltypeexpr) {
 		   $$ = $decltypeexpr;
@@ -7278,13 +7682,22 @@ default_delete : deleted_definition
                 | explicit_default
 		;
 
-/* For C++ deleted definition '= delete' */
-deleted_definition : DELETE_KW {
-		  $$ = default_dtype;
-		  $$.val = NewString("delete");
-		  $$.type = T_STRING;
-		}
-		;
+/* For C++ deleted definition '= delete', optionally followed by the C++26 reason, such as '= delete("use g() instead")'.
+   The value produced is always just "delete", so every rule reaching a deleted definition via 'default_delete' or
+   'definetype' - including any rule added later, such as one for an 'auto' return type - accepts both spellings. */
+deleted_definition : DELETE_KW deleted_reason {
+                  $$ = default_dtype;
+                  $$.val = NewString("delete");
+                  $$.type = T_STRING;
+                }
+                ;
+
+/* The C++26 reason for a deleted definition is diagnostic only, so it is parsed and discarded */
+deleted_reason : LPAREN string RPAREN {
+                  Delete($string);
+                }
+               | %empty
+               ;
 
 /* For C++ explicitly defaulted functions '= default' */
 explicit_default : DEFAULT {
@@ -7456,6 +7869,10 @@ exprmem        : idcolon ARROW ID {
 		 $$ = default_dtype;
 		 $$.val = NewStringf("%s->%s", $idcolon, $ID);
 	       }
+               | THIS ARROW ID {
+                 $$ = default_dtype;
+                 $$.val = NewStringf("this->%s", $ID);
+               }
 	       | exprmem[in] ARROW ID {
 		 $$ = $in;
 		 Printf($$.val, "->%s", $ID);
@@ -7475,6 +7892,9 @@ exprmem        : idcolon ARROW ID {
 	       }
 	       | type LPAREN {
 		 $$ = default_dtype;
+                 /* One of the four named casts casts to its template argument, which is the type of the
+                  * expression, unlike the constructor cast and the function call this rule also matches. */
+                 int cast_type_code = named_cast_type_code($type);
 		 if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
 
 		 String *qty = Swig_symbol_type_qualify($type, 0);
@@ -7491,7 +7911,7 @@ exprmem        : idcolon ARROW ID {
 		  * complicated because the return type can vary between
 		  * overloaded forms).
 		  */
-		 $$.type = SwigType_type(qty);
+                 $$.type = cast_type_code ? cast_type_code : SwigType_type(qty);
 		 if ($$.type == T_USER) $$.type = T_UNKNOWN;
 		 $$.unary_arg_type = 0;
 
@@ -7599,6 +8019,15 @@ requirement_body : LBRACE {
 /* Non-compound expression */
 exprsimple     : exprnum
                | exprmem
+               /* SWIG's scanner used to hand 'this' to the parser as an ordinary identifier and now returns a
+                  keyword token for it, so the expression grammar needs the token where the identifier used to
+                  arrive: a default member initialiser such as 'Node *parent = this;'.  SWIG has no value for it,
+                  only the text. */
+               | THIS {
+                 $$ = default_dtype;
+                 $$.val = NewString("this");
+                 $$.type = T_UNKNOWN;
+               }
                | string {
 		  $$ = default_dtype;
 		  $$.stringval = $string;

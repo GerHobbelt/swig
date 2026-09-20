@@ -54,17 +54,105 @@ Work has only just begun on adding C++20 support.
 
 
 <p>
-SWIG supports the spaceship operator <tt>&lt;=&gt;</tt> in constant
-expressions.  To simplify handling of the return value type, it is currently
-treated as an integer rather than <tt>std::strong_ordering</tt>, etc.
-In practice we think that should do the right thing in most cases.
+The C++20 three-way comparison operator <tt>&lt;=&gt;</tt>, commonly called the
+spaceship operator, is parsed, but not wrapped by default.  As with most
+<a href="SWIGPlus.html#SWIGPlus_nn28">overloaded operators</a>, the C++ name
+<tt>operator&lt;=&gt;</tt> is not a valid identifier in the target languages, and
+no target language module currently supplies a default renaming for it or maps it
+onto a three-way comparison of its own.  The operator in:
+</p>
+
+<div class="code">
+<pre>
+struct Ordered {
+  int v;
+
+  std::strong_ordering operator&lt;=&gt;(const Ordered&amp; o) const { return v &lt;=&gt; o.v; }
+};
+</pre>
+</div>
+
+<p>
+is therefore ignored with warning 503 (<i>Can't wrap 'operator &lt;=&gt;' unless
+renamed to a valid identifier</i>).  Give it a name the target language can use
+and it is wrapped as an ordinary method:
+</p>
+
+<div class="code">
+<pre>
+%rename(compare) Ordered::operator&lt;=&gt;;
+</pre>
+</div>
+
+<p>
+A comparison operator can also be defaulted, which is how a C++ class opts in to
+the compiler generated comparisons:
+</p>
+
+<div class="code">
+<pre>
+%warnfilter(SWIGWARN_CPP14_AUTO) Defaulted::operator&lt;=&gt;;
+%rename(is_equal) Defaulted::operator==;
+
+%inline %{
+#include &lt;compare&gt;
+
+struct Defaulted {
+  int v;
+
+  explicit Defaulted(int v_) : v(v_) { }
+
+  auto operator&lt;=&gt;(const Defaulted&amp;) const = default;
+  bool operator==(const Defaulted&amp;) const = default;
+};
+%}
+</pre>
+</div>
+
+<p>
+The canonical spelling used above gives the three-way comparison operator a
+deduced return type, which SWIG cannot deduce, so <tt>operator&lt;=&gt;</tt> is
+ignored for that reason rather than because of its name: the warning is 345
+(<i>Unable to deduce auto return type for 'name' without a trailing return type
+(ignored)</i>), the same as for any other function with an <tt>auto</tt> return
+type and no trailing return type.  Renaming makes no difference here, so the
+warning is filtered out instead.
 </p>
 
 <p>
-SWIG also recognises <tt>operator&lt;=&gt;</tt> which can be wrapped
-if renamed.  There is not currently any default renaming for the operator
-or any attempt to automatically map it to a three-way comparison operator
-in any of the target languages.
+The example declares <tt>operator==</tt> as well because C++ declares an equality
+operator implicitly for every defaulted three-way comparison operator:
+<tt>Defaulted</tt> supports <tt>==</tt> whether or not one is written out.  SWIG
+wraps only the declarations it is given, so writing the equality operator out is
+what makes the comparison reachable from the target language.  A defaulted
+<tt>operator==</tt> has to return <tt>bool</tt>, so unlike
+<tt>operator&lt;=&gt;</tt> it has no deduced return type and is wrapped as usual.
+</p>
+
+<p>
+The <tt>std::strong_ordering</tt> that <tt>operator&lt;=&gt;</tt> deduces would
+not be wrappable as a three-way comparison in any target language anyway, so
+ignoring it loses nothing in practice.
+</p>
+
+<p>
+SWIG also supports <tt>&lt;=&gt;</tt> in constant expressions.  It does not give
+the result of the comparison a type of its own, which does not matter for the
+usual case of comparing that result against another ordering or against a literal
+<tt>0</tt>, but does mean that a constant whose value is an ordering is not
+wrapped:
+</p>
+
+<div class="code">
+<pre>
+#define SPACE (3 &lt;=&gt; 3 == 0)
+#define SHIP (1 &lt;=&gt; 2)  // Warning 304: Unsupported constant value (ignored)
+</pre>
+</div>
+
+<p>
+<b>Compatibility note:</b> SWIG-4.6.0 is the first version to parse a defaulted or deleted function that
+is declared with a cv-qualifier and an <tt>auto</tt> return type.
 </p>
 
 <H3><a name="CPlusPlus20_lambda_templates">10.2.2 Lambda templates</a></H3>
@@ -242,6 +330,31 @@ wrapper signature <tt>f_mix(double x, int y1, std::string y2)</tt>.
 </p>
 
 <p>
+An <tt>auto</tt> parameter can itself be a pack.  The invented type template
+parameter is then a template parameter pack, just as it is for the equivalent
+explicit <tt>template&lt;typename... Ts&gt;</tt> spelling, so the number of types
+given to <tt>%template</tt> is the number of parameters the wrapped function
+takes:
+</p>
+
+<div class="code">
+<pre>
+%inline %{
+int sum(auto... args) { return (args + ... + 0); }
+%}
+
+%template(sum_ii)  sum&lt;int, int&gt;;
+%template(sum_iii) sum&lt;int, int, int&gt;;
+</pre>
+</div>
+
+<p>
+<tt>sum_ii</tt> takes two parameters and <tt>sum_iii</tt> takes three.  The
+decorated spellings <tt>const auto&amp;...</tt>, <tt>auto&amp;&amp;...</tt> and
+<tt>auto*...</tt> introduce a pack in exactly the same way.
+</p>
+
+<p>
 The <tt>auto</tt> placeholder may carry the usual parameter decorations -
 reference, pointer, forwarding reference, and CV-qualifiers.
 </p>
@@ -262,7 +375,7 @@ T o(T x, const auto&amp; y);          // decorated auto mixed with explicit head
 </div>
 
 <p>
-<b>Compatibility note:</b> SWIG-4.5.0 is the first version to parse and support abbreviated function templates with <tt>auto</tt> parameters, including the constrained auto form in both parameter and return type positions, mixing with an explicit template parameter list, and CV-qualifier / reference / pointer decorations on the <tt>auto</tt> placeholder.
+<b>Compatibility note:</b> SWIG-4.5.0 is the first version to parse and support abbreviated function templates with <tt>auto</tt> parameters, including the constrained auto form in both parameter and return type positions, mixing with an explicit template parameter list, and CV-qualifier / reference / pointer decorations on the <tt>auto</tt> placeholder.  SWIG-4.6.0 is the first version to instantiate an <tt>auto</tt> parameter pack, which previously invented a template parameter that was not a pack and so could not be instantiated at all.
 </p>
 
 <H3><a name="CPlusPlus20_concepts">10.2.5 Concepts and requires-clauses</a></H3>
@@ -319,6 +432,40 @@ and parenthesised constraint subexpressions are also accepted - for
 example <tt>requires Numeric&lt;T&gt; &amp;&amp; SmallNumeric&lt;T&gt;</tt> or
 <tt>requires (Numeric&lt;T&gt; || std::same_as&lt;T, bool&gt;)</tt>.
 </p>
+
+<p>
+When the function has a
+<a href="CPlusPlus11.html#CPlusPlus11_alternate_function_syntax">trailing return type</a>,
+the trailing requires-clause comes after it, the trailing return type being the
+end of the declarator:
+</p>
+
+<div class="code">
+<pre>
+template&lt;typename T&gt;
+auto negate_value(T x) -&gt; T requires Numeric&lt;T&gt; {
+  return -x;
+}
+
+%template(negate_value_int) negate_value&lt;int&gt;;
+</pre>
+</div>
+
+<p>
+The body of a <tt>concept</tt> is not restricted to concept names: any
+expression is accepted, including a bare literal and one containing a
+top level comparison operator.
+</p>
+
+<div class="code">
+<pre>
+template&lt;typename T&gt;
+concept Anything = true;
+
+template&lt;typename T&gt;
+concept NonEmpty = sizeof(T) &gt; 0;
+</pre>
+</div>
 
 <p>
 A <tt>requires</tt>-expression itself - the new C++20 primary that lists

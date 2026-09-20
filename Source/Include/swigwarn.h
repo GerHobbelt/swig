@@ -109,6 +109,8 @@
 #define WARN_CPP14_AUTO                              345
 #define WARN_CPP11_AUTO                              346
 #define WARN_CPP17_CLASS_TEMPLATE_ARGUMENT_DEDUCTION 347
+#define WARN_CPP11_AUTO_INCONSISTENT_DEDUCTION       348
+#define WARN_CPP17_STRUCTURED_BINDING                349
 
 #define WARN_IGNORE_OPERATOR_NEW                     350 /* new */
 #define WARN_IGNORE_OPERATOR_DELETE                  351 /* delete */
@@ -157,7 +159,7 @@
 #define WARN_IGNORE_OPERATOR_NEWARR                  394 /* new [] */
 #define WARN_IGNORE_OPERATOR_DELARR                  395 /* delete [] */
 #define WARN_IGNORE_OPERATOR_REF                     396 /* operator *() */
-#define WARN_IGNORE_OPERATOR_LTEQUALGT               397 /* <=> */
+/* Unused since 4.6.0: #define WARN_IGNORE_OPERATOR_LTEQUALGT 397 */
 
 /* please leave 350-399 free for WARN_IGNORE_OPERATOR_* */
 

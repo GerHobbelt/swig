@@ -10,6 +10,10 @@ static constexpr auto f = false;
 static auto zero = 0;
 static constexpr auto one = 1;
 
+// Cv-qualified auto, either ordering.
+static const auto cz = 2;
+static auto const zc = 3;
+
 static auto la = 1.0L;
 static auto da = 1.0;
 static auto fa = 1.0f;
@@ -33,23 +37,54 @@ static constexpr auto NOEXCEPT_FUNC = noexcept(func);
 
 %}
 
-// SWIG currently can't deduce the type for examples below.
-// Test two approaches to suppressing the warning.
-%ignore Bad1;
-%ignore Bad2;
-%warnfilter(SWIGWARN_CPP11_AUTO) Bad3;
-%warnfilter(SWIGWARN_CPP11_AUTO) Bad4;
+// The address of a variable in scope deduces to a pointer to that variable's type.  A setter for a
+// pointer variable is not what is under test here, so they are read only.
+%immutable ptr_t;
+%immutable ptr_zero;
 
 %inline %{
-static auto Bad1 = &t;
-static constexpr auto Bad2 = &f;
-static auto Bad3 = &zero;
-static constexpr auto Bad4 = &one;
+static auto ptr_t = &t;                    // bool *
+static constexpr auto ptr_f = &f;          // const bool *
+static auto ptr_zero = &zero;              // int *
+static constexpr auto ptr_one = &one;      // const int *
+static const auto const_ptr_zero = &zero;  // int *const
+%}
+
+// A named cast deduces the type it casts to when that is a built in type.  Setting a
+// const char * variable copies the new string and leaks the old one, hence warning 451.
+%warnfilter(SWIGWARN_TYPEMAP_CHARLEAK) cast_constcharptr;
+
+%{
+static unsigned char bytes[] = "abc";
+%}
+
+%inline %{
+static auto cast_double = static_cast<double>(one);
+static auto cast_uint = static_cast<unsigned int>(one);
+static auto cast_constcharptr = reinterpret_cast<const char *>(bytes);
+%}
+
+// A cast to char * is not deduced: both char * and const char * are described by the same
+// type code, which names the const form, so deducing it would add a const the cast never had.
+%warnfilter(SWIGWARN_CPP11_AUTO) cast_charptr;
+
+%inline %{
+static auto cast_charptr = reinterpret_cast<char *>(bytes);
+%}
+
+// SWIG can't deduce the type from a function call.
+// Test two approaches to suppressing the warning.
+%ignore Bad1;
+%warnfilter(SWIGWARN_CPP11_AUTO) Bad2;
+
+%inline %{
+static auto Bad1 = func();
+static auto Bad2 = func();
 %}
 %{
 // Wunused-variable warning suppression
 bool warning_suppression() {
-  return Bad1 || Bad3;
+  return Bad1 != 0 || Bad2 != 0 || cast_charptr != 0;
 }
 %}
 
@@ -64,6 +99,9 @@ static auto wstring_lit_len2 = sizeof("123" L"456") / sizeof(wchar_t) - 1;
 
 // FIXME: Not currently handled by SWIG's parser:
 //static auto constexpr greeting = "Hello";
+
+// Direct-initialisation of an auto variable, deferred for now:
+//static auto direct(42);
 
 %}
 

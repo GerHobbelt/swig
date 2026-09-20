@@ -8,12 +8,18 @@ NODEJS = @NODEJS@
 SCRIPTSUFFIX = _runme.js
 OBJEXT = @OBJEXT@
 SO = @SO@
-GYP_CXXFLAGS = @BOOST_CPPFLAGS@ @PLATCXXFLAGS@ @NAPI_INCLUDE@
+
+# node-gyp's Release configuration hardcodes -O3, which dominates the node and napi test-suite run times. GYP_OPTFLAGS
+# is appended after the flags node-gyp adds itself, so the last -O option wins - override with -O2 to compile optimised.
+GYP_OPTFLAGS = -O0
+GYP_CXXFLAGS = @BOOST_CPPFLAGS@ @PLATCXXFLAGS@ @NAPI_INCLUDE@ $(GYP_OPTFLAGS)
 
 HAVE_CXX11   = @HAVE_CXX11@
 HAVE_CXX14   = @HAVE_CXX14@
 HAVE_CXX17   = @HAVE_CXX17@
 HAVE_CXX20   = @HAVE_CXX20@
+HAVE_CXX23   = @HAVE_CXX23@
+HAVE_CXX26   = @HAVE_CXX26@
 srcdir       = @srcdir@
 top_srcdir   = @top_srcdir@
 top_builddir = @top_builddir@
@@ -26,7 +32,7 @@ CPP_TEST_CASES += \
 	li_cdata_carrays_cpp \
 	li_factory \
 	li_std_containers_int \
-	li_std_map_member
+	li_std_map_member \
 
 C_TEST_CASES += \
 	javascript_uint8array_fragment \

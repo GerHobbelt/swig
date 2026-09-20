@@ -772,6 +772,105 @@ for actually deducing the type as for <tt>decltype()</tt>), and for specifying
 the return type of <a href="#CPlusPlus11_lambda_functions_and_expressions">lambdas</a>
 and <a href="#CPlusPlus11_alternate_function_syntax">functions</a>.</p>
 
+<p>An <tt>auto</tt> variable can carry a declarator, so the placeholder can be decorated with a
+reference, rvalue reference, pointer or cv-qualifier, just like an <tt>auto</tt> function parameter.
+The decoration is kept on the wrapped variable:</p>
+
+<div class="code"><pre>
+int g = 42;
+int *pg = &amp;g;
+
+auto&amp; r1 = g;            // int &amp;
+const auto&amp; r2 = g;      // const int &amp;
+auto&amp;&amp; r3 = 42;          // int &amp;&amp;
+auto* p1 = &amp;g;           // int *
+auto* const p2 = &amp;g;     // int *const
+auto** p3 = &amp;pg;         // int **
+auto const* p4 = &amp;g;     // const int * - a cv-qualifier may also follow the placeholder
+</pre></div>
+
+<p>The type is deduced from the initialiser, using the declaration a name in the initialiser refers to,
+so the declarator of that declaration is part of the deduced type. Taking the address of something in
+scope deduces a pointer to it, and a named cast deduces the type it casts to:</p>
+
+<div class="code"><pre>
+int fn(int x);
+
+auto v1 = pg;                       // int *
+auto v2 = &amp;fn;                      // int (*)(int)
+auto v3 = static_cast&lt;double&gt;(g);   // double
+</pre></div>
+
+<p>As C++ requires, the top level cv-qualifiers of the initialiser are dropped unless the variable is a
+reference, so <tt>r2</tt> above is a <tt>const int &amp;</tt> while a by value <tt>auto</tt> initialised
+from a <tt>const int</tt> is a plain <tt>int</tt>.</p>
+
+<p>A braced initialiser holding a single element deduces the type of that element, which is the C++17
+rule for this form:</p>
+
+<div class="code"><pre>
+auto v4{42};   // int
+auto* v5{&amp;g};  // int *
+</pre></div>
+
+<p>A declaration declaring more than one variable is wrapped a variable at a time, each declarator keeping
+its own decoration:</p>
+
+<div class="code"><pre>
+auto v6 = 1, v7 = 2;    // two ints
+auto v8 = 3, *v9 = &amp;g;  // an int and an int *
+</pre></div>
+
+<p>C++ requires every declarator in the list to deduce to the same type, so a declarator SWIG cannot
+deduce a type from takes the type deduced for the others, whichever of them that was:</p>
+
+<div class="code"><pre>
+auto v10 = fn(1), v11 = 2;  // both int, deduced from '2'
+</pre></div>
+
+<p>Two declarators deducing different types is not valid C++, and SWIG says so while wrapping each
+variable with the type its own initialiser deduces, so that</p>
+
+<div class="code"><pre>
+auto v12 = 1, v13 = 2.5;
+</pre></div>
+
+<p>gives:</p>
+
+<div class="shell"><pre>
+example.i:28: Warning 348: Inconsistent auto type deduction for variable 'v13': initialiser '2.5' deduces 'double', not 'int'.
+</pre></div>
+
+<p>Only fundamental types are compared this way, because a typedef cannot be resolved while the
+declaration is being parsed, so a mismatch involving anything else goes unreported.</p>
+
+<p>The type still has to be deducible from the initialiser. Where no declarator of a declaration deduces
+one, the variables are dropped after issuing warning 346, and the warning says which of the two got in
+the way. An initialiser SWIG understands but cannot deduce a type from, such as a function call or the
+<a href="#CPlusPlus11_null_pointer_constant"><tt>nullptr</tt></a> literal, names the initialiser:</p>
+
+<div class="code"><pre>
+auto v14 = nullptr;
+</pre></div>
+
+<div class="shell"><pre>
+example.i:30: Warning 346: Unable to deduce auto type for variable 'v14' from initialiser 'nullptr' (ignored).
+</pre></div>
+
+<p>while an initialiser in a form SWIG does not support, such as a braced initialiser holding more than
+one element or a new expression, says so instead:</p>
+
+<div class="code"><pre>
+auto v15 = {g, 1};
+</pre></div>
+
+<div class="shell"><pre>
+example.i:32: Warning 346: Unable to deduce auto type for variable 'v15' from an unsupported initialiser (ignored).
+</pre></div>
+
+<p>The usual workaround for either is to ignore the variable, or to declare it with its actual type in
+the interface file, in the same way as for a <tt>decltype</tt> SWIG cannot deduce.</p>
+
 <H3><a name="CPlusPlus11_range_based_for_loop">7.2.7 Range-based for-loop</a></H3>
 
 
@@ -786,6 +885,16 @@ ignores it.</p>
 auto val = [] { return something; };
 auto sum = [](int x, int y) { return x+y; };
 auto sum = [](int x, int y) -&gt; int { return x+y; };
+</pre></div>
+
+<p>
+The explicit trailing return type can be any type, just as it can be for an
+<a href="#CPlusPlus11_alternate_function_syntax">ordinary function</a>:
+</p>
+
+<div class="code"><pre>
+auto address = [](int &amp;x) -&gt; int * { return &amp;x; };
+auto value = [](int &amp;x) -&gt; const int &amp; { return x; };
 </pre></div>
 
 <p>The lambda functions are removed from the wrappers for now, because of the lack of support
@@ -844,6 +953,29 @@ auto SomeStruct::FuncName(int x, int y) -&gt; int {
 <div class="code"><pre>
 auto square(float a, float b) -&gt; decltype(a);
 </pre></div>
+
+<p>
+The trailing return type can be any type, including a pointer, a reference to a primitive type, an array reference or a function pointer:
+</p>
+
+<div class="code"><pre>
+struct MoreTrailing {
+  auto count() -&gt; const int&amp;;
+  auto data() -&gt; int *;
+  auto values() -&gt; int (&amp;)[3];
+  auto callback() -&gt; int (*)(int);
+};
+</pre></div>
+
+<p>
+SWIG has one restriction that C++ does not: a pointer to member trailing return type has to be written with parentheses, <tt>auto member() -&gt; int (MoreTrailing::*);</tt>.
+C++ accepts the unparenthesised <tt>auto member() -&gt; int MoreTrailing::*;</tt> equally well, but SWIG reports a syntax error for that spelling.
+</p>
+
+<p>
+<b>Compatibility note:</b> SWIG-4.6.0 is the first version to accept a pointer or a reference to a primitive type as a trailing return type.
+Earlier versions accepted only a small set of trailing return types and reported a syntax error for the rest.
+</p>
 
 <H3><a name="CPlusPlus11_object_construction_improvement">7.2.10 Object construction improvement</a></H3>
 
@@ -1010,7 +1142,16 @@ struct FinalDerivedStruct final : BaseStruct {
 <H3><a name="CPlusPlus11_null_pointer_constant">7.2.13 Null pointer constant</a></H3>
 
 
-<p>The <tt>nullptr</tt> constant is mostly unimportant in wrappers. In the few places it has an effect, it is treated like <tt>NULL</tt>.</p>
+<p>The <tt>nullptr</tt> constant is mostly unimportant in wrappers. Where it is the default value of a
+function parameter and the target language writes default values of its own rather than leaving them to
+the C++ layer, <tt>nullptr</tt> becomes that language's null rather than the C++ spelling, so a parameter
+defaulted to <tt>nullptr</tt> is generated as defaulted to <tt>None</tt> by Python and is documented as
+defaulted to <tt>nil</tt> by Ruby. Elsewhere it is treated like <tt>NULL</tt>.</p>
+
+<p>SWIG does not deduce a type from <tt>nullptr</tt>, so an
+<a href="#CPlusPlus11_type_inference"><tt>auto</tt></a> variable initialised with it trips warning 346
+(<i>Unable to deduce auto type for variable 'v' from initialiser 'nullptr' (ignored)</i>) and is dropped,
+the same as for any other initialiser SWIG cannot deduce a type from.</p>
 
 <H3><a name="CPlusPlus11_strongly_typed_enumerations">7.2.14 Strongly typed enumerations</a></H3>
 
@@ -1162,6 +1303,24 @@ typedef void (*PFD)(double);  // Equivalent typedef
 <p>
 SWIG handles a type alias exactly as it handles the equivalent <tt>typedef</tt>, so no special
 treatment is required.
+</p>
+
+<p>
+A function type can also be written with the
+<a href="#CPlusPlus11_alternate_function_syntax">alternate function syntax</a>, in an alias
+declaration or an alias template:
+</p>
+
+<div class="code"><pre>
+using alt_callback_t = auto (*)(int) -&gt; int;
+using alt_function_t = auto (int) -&gt; int;
+
+template&lt;typename T&gt; using alt_fn_t = auto (*)(T) -&gt; T;
+</pre></div>
+
+<p>
+<b>Compatibility note:</b> SWIG-4.6.0 is the first version to accept a trailing return type in an alias declaration.
+The equivalent <tt>typedef</tt> spelling was already accepted.
 </p>
 
 <H3><a name="CPlusPlus11_alias_templates">7.2.18 Alias templates</a></H3>
