@@ -1,4 +1,4 @@
-from swig_test_utils import swig_annotations_in_stub, swig_assert, swig_check, swig_get_annotations
+from swig_test_utils import swig_annotations_in_stub, swig_assert, swig_assert_raises, swig_check, swig_get_annotations
 
 from python_annotations_typing import *
 
@@ -19,8 +19,43 @@ if annotations_supported:
     }:
         raise RuntimeError("annotations mismatch: {}".format(anno))
 
+    # Overloads all returning int * agree, so that is the type annotated
     anno = get_annotations(global_overloaded)
     if anno != {"return": "typing.Optional[SWIGTYPE_p_int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # Overloads returning different types can only be annotated typing.Any
+    anno = get_annotations(overloaded_differ)
+    if anno != {"return": "typing.Any"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # The ignored const char * overload is not wrapped, so the rest still agree on int
+    anno = get_annotations(overloaded_ignored)
+    if anno != {"return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # The overload with annotations turned off says nothing about what the rest return
+    anno = get_annotations(overloaded_annotations_off)
+    if anno != {"return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # The data model requires these to return a string, so char * is not typing.Optional here
+    sd = StringDunders()
+    anno = get_annotations(sd.__str__)
+    if anno != {"return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    anno = get_annotations(sd.__repr__)
+    if anno != {"return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    anno = get_annotations(sd.__format__)
+    if anno != {"spec": "typing.Optional[str]", "return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # An ordinary char * returning method is unaffected
+    anno = get_annotations(sd.not_a_dunder)
+    if anno != {"return": "typing.Optional[str]"}:
         raise RuntimeError("annotations mismatch: {}".format(anno))
 
     ts = MakeShort(10)
@@ -283,6 +318,141 @@ if annotations_supported:
         raise RuntimeError("__init__ should have no return annotation: {}".format(anno))
     swig_check(ArgoutConstructor(7).value, 7)
 
+    # numoutputs=0 says the argout typemap returns nothing of its own
+    anno = get_annotations(argoutBoolCheckOnly)
+    if anno != {"arg": "bool", "return": "bool"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolCheckOnly(True), True)
+
+    anno = get_annotations(argoutVoidCheckOnly)
+    if anno != {"arg": "bool", "return": "None"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutVoidCheckOnly(True), None)
+
+    anno = get_annotations(argoutBoolCheckAndAppend)
+    if anno != {"arg": "bool", "return": "typing.List[typing.Union[bool, int]]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolCheckAndAppend(True), [True, 42])
+
+    # overwrite=1 says the argout typemap discards everything returned before it
+    anno = get_annotations(argoutVoidReplace)
+    if anno != {"arg": "bool", "return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutVoidReplace(True), "replaced42")
+
+    anno = get_annotations(argoutBoolReplace)
+    if anno != {"arg": "bool", "return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolReplace(True), "replaced42")
+
+    # the last overwriting typemap wins
+    anno = get_annotations(argoutVoidReplaceTwice)
+    if anno != {"arg": "bool", "return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutVoidReplaceTwice(True), "replaced43")
+
+    anno = get_annotations(argoutBoolReplaceTwice)
+    if anno != {"arg": "bool", "return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolReplaceTwice(True), "replaced43")
+
+    anno = get_annotations(argoutBoolAppendThenReplace)
+    if anno != {"arg": "bool", "return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolAppendThenReplace(True), "replaced43")
+
+    anno = get_annotations(argoutBoolReplaceThenAppend)
+    if anno != {"arg": "bool", "return": "typing.List[typing.Union[str, int]]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolReplaceThenAppend(True), ["replaced42", 43])
+
+    # container="tuple" says the argout typemaps build a tuple rather than a list.
+    # A single returned value is not put in a container at all
+    anno = get_annotations(argoutVoidTupleSingle)
+    if anno != {"return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutVoidTupleSingle(), 42)
+
+    anno = get_annotations(argoutBoolTupleSingle)
+    if anno != {"arg": "bool", "return": "typing.Tuple[bool, int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolTupleSingle(True), (True, 42))
+
+    anno = get_annotations(argoutVoidTupleTwice)
+    if anno != {"return": "typing.Tuple[int, int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutVoidTupleTwice(), (42, 43))
+
+    anno = get_annotations(argoutBoolTupleTwice)
+    if anno != {"arg": "bool", "return": "typing.Tuple[bool, int, int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolTupleTwice(True), (True, 42, 43))
+
+    # an overwriting typemap builds its container itself, so a single value is in it too,
+    # unlike a container that is only appended into
+    anno = get_annotations(argoutVoidTupleReplaceOnly)
+    if anno != {"return": "typing.Tuple[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutVoidTupleReplaceOnly(), (41,))
+
+    anno = get_annotations(argoutBoolTupleReplaceOnly)
+    if anno != {"arg": "bool", "return": "typing.Tuple[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolTupleReplaceOnly(True), (41,))
+
+    anno = get_annotations(argoutBoolListReplaceOnly)
+    if anno != {"arg": "bool", "return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolListReplaceOnly(True), [41])
+
+    # an overwriting typemap sets the container the argout typemaps after it append into
+    anno = get_annotations(argoutBoolTupleReplaceThenAppend)
+    if anno != {"arg": "bool", "return": "typing.Tuple[int, int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolTupleReplaceThenAppend(True), (41, 42))
+
+    # argout typemaps naming different containers get the catch-all type (warning 478).
+    # Whichever typemap runs first holds everything returned before it, so the same two
+    # typemaps in the opposite order nest the returned values the opposite way round.
+    anno = get_annotations(argoutBoolTupleThenAppend)
+    if anno != {"arg": "bool", "return": "typing.Any"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolTupleThenAppend(True), [(True, 42), 43])
+
+    anno = get_annotations(argoutBoolAppendThenTuple)
+    if anno != {"arg": "bool", "return": "typing.Any"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolAppendThenTuple(True), ([True, 43], 42))
+
+    # the python:annotations:catchall feature supplies the type SWIG cannot work out
+    anno = get_annotations(argoutBoolTupleThenAppendTyped)
+    if anno != {"arg": "bool", "return": "typing.List[typing.Union[typing.Tuple[bool, int], int]]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolTupleThenAppendTyped(True), [(True, 42), 43])
+
+    # a container Python does not know how to annotate gets the catch-all type, without any
+    # warning as the argout typemaps agree on it. One value is not in a container at all.
+    anno = get_annotations(argoutStrOneChar)
+    if anno != {"return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutStrOneChar(), "a")
+
+    anno = get_annotations(argoutStrTwoChars)
+    if anno != {"return": "typing.Any"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutStrTwoChars(), "ab")
+
+    anno = get_annotations(argoutStrResultAndTwoChars)
+    if anno != {"return": "typing.Any"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutStrResultAndTwoChars(), "Zab")
+
+    # the python:annotations:catchall feature supplies the type for it too
+    anno = get_annotations(argoutStrTwoCharsTyped)
+    if anno != {"return": "str"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutStrTwoCharsTyped(), "ab")
+
     anno = get_annotations(argoutMultiarg)
     if anno != {"return": "typing.List[int]"}:
         raise RuntimeError("annotations mismatch: {}".format(anno))
@@ -312,3 +482,104 @@ if annotations_supported:
     if anno != {"first": "int", "last": "float", "return": "typing.List[typing.Union[bool, typing.List[int]]]"}:
         raise RuntimeError("annotations mismatch: {}".format(anno))
     swig_check(argoutBoolMultiargBetweenFirstLast(5, 6.0), [True, []])
+
+    # numoutputs=0 on the out typemap suppresses the function return value - the case in
+    # issue #3084. Only the argout values are returned, so a single one is not put in a list
+    anno = get_annotations(argoutSuppressedSingleAppend)
+    if anno != {"code": "int", "return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutSuppressedSingleAppend(0), 42)
+
+    anno = get_annotations(argoutSuppressedAppendTwice)
+    if anno != {"code": "int", "return": "typing.List[typing.Union[int, int]]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutSuppressedAppendTwice(0), [42, 43])
+
+    # a suppressed return value and an argout typemap returning nothing leaves no values
+    anno = get_annotations(argoutSuppressedCheckOnly)
+    if anno != {"code": "int", "return": "None"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutSuppressedCheckOnly(0), None)
+
+    # the return value is suppressed even when there is no argout typemap at all
+    anno = get_annotations(argoutSuppressedNoArgout)
+    if anno != {"code": "int", "return": "None"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutSuppressedNoArgout(0), None)
+
+    # an overwriting multi-argument argout typemap - the case in issue #3469. The type the
+    # typemap builds is the whole return type, it is not nested inside another list
+    anno = get_annotations(argoutMultiargReplace)
+    if anno != {"return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutMultiargReplace(), [])
+
+    anno = get_annotations(argoutBoolMultiargReplace)
+    if anno != {"arg": "bool", "return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolMultiargReplace(True), [])
+
+    anno = get_annotations(argoutMultiargReplaceAfterFirst)
+    if anno != {"first": "int", "return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutMultiargReplaceAfterFirst(1), [])
+
+    anno = get_annotations(argoutBoolMultiargReplaceAfterFirst)
+    if anno != {"first": "int", "return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolMultiargReplaceAfterFirst(2), [])
+
+    anno = get_annotations(argoutMultiargReplaceBetweenFirstLast)
+    if anno != {"first": "int", "last": "float", "return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutMultiargReplaceBetweenFirstLast(3, 4.0), [])
+
+    anno = get_annotations(argoutBoolMultiargReplaceBetweenFirstLast)
+    if anno != {"first": "int", "last": "float", "return": "typing.List[int]"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+    swig_check(argoutBoolMultiargReplaceBetweenFirstLast(5, 6.0), [])
+
+    # OUTPUT is not a parameter of the wrapped function and always returns a value
+    anno = get_annotations(singleOutput)
+    if anno != {"x": "int", "y": "int", "return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # The pointer form of INPUT accepts a null pointer, which is None, as well as a value
+    anno = get_annotations(twoInputs)
+    if anno != {
+        "IN1": "typing.Optional[int]",
+        "IN2": "typing.Optional[int]",
+        "return": "bool",
+    }:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # INOUT returns what it was given, so it returns None when given None
+    anno = get_annotations(inout)
+    if anno != {
+        "x": "int",
+        "INOUT": "typing.Optional[int]",
+        "return": "typing.Optional[int]",
+    }:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    # The reference forms reject a null pointer, so they take and return a plain value
+    anno = get_annotations(refInput)
+    if anno != {"refIn": "int", "return": "None"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    anno = get_annotations(refOutput)
+    if anno != {"return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+    anno = get_annotations(refInout)
+    if anno != {"refInOut": "int", "return": "int"}:
+        raise RuntimeError("annotations mismatch: {}".format(anno))
+
+# The annotations above describe what the typemaps really accept and return
+swig_check(twoInputs(None, None), True)
+swig_check(inout(1, None), None)
+swig_check(inout(1, 5), 5)
+with swig_assert_raises(TypeError):
+    refInput(None)
+with swig_assert_raises(TypeError):
+    refInout(None)

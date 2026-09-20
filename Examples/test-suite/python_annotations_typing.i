@@ -23,6 +23,11 @@
 
 %feature("python:annotations", "0") no_annotations;
 
+/* Overloads which do not all return the same type are annotated typing.Any, but an overload which
+   is not wrapped, or which has annotations turned off, says nothing about what the others return. */
+%ignore overloaded_ignored(const char *);
+%feature("python:annotations", "0") overloaded_annotations_off(int);
+
 %typemap(pytyping) OptionalInt "typing.Optional[int]";
 %typemap(pytyping, out = "$typemap(pytyping, short)") MyType "typing.Union[int, float]";
 
@@ -55,6 +60,25 @@ int *global_ints(int &ri, Space::Template<short> t) { return &ri; }
 int *global_overloaded(int &ri) { return &ri; }
 int *global_overloaded() { return NULL; }
 int *no_annotations(int &ri, const char *c) { return NULL; }
+
+int    overloaded_differ(int x) { return x; }
+double overloaded_differ(double x, double y) { return x + y; }
+
+int         overloaded_ignored(int x) { return x; }
+int         overloaded_ignored(int x, int y) { return x + y; }
+const char *overloaded_ignored(const char *s) { return s; }
+
+int overloaded_annotations_off(int x) { return x; }
+int overloaded_annotations_off(int x, int y) { return x + y; }
+
+/* The Python data model requires these to return a string, so they are annotated str rather
+   than the typing.Optional a char * is otherwise given. */
+struct StringDunders {
+  const char *__str__() const { return "s"; }
+  const char *__repr__() const { return "r"; }
+  const char *__format__(const char *spec) const { return spec; }
+  const char *not_a_dunder() const { return "n"; }
+};
 %}
 %template(TemplateShort) Space::Template<short>;
 %template(MakeShort) makeT<short>;
@@ -125,8 +149,151 @@ int is_python_fastproxy() { return 0; }
 %typemap(argout) short *CtorFlag { (void)*$1; }
 %typemap(pytyping) short *CtorFlag "None"
 
+/* An argout typemap that only checks an error code returns nothing of its own. */
+%typemap(in, numinputs=0) short *OutCheck (short temp) { $1 = &temp; }
+%typemap(argout, numoutputs=0) short *OutCheck {
+  if (*$1 != 0) {
+    PyErr_Format(PyExc_RuntimeError, "error code %d", (int)*$1);
+    SWIG_fail;
+  }
+}
+%typemap(pytyping) short *OutCheck "None"
+
+/* An argout typemap that overwrites $result discards everything returned before it. */
+%typemap(in, numinputs=0) short *OutReplace (short temp) { $1 = &temp; }
+%typemap(argout, overwrite=1) short *OutReplace {
+  Py_XDECREF($result);
+  $result = PyUnicode_FromFormat("replaced%d", (int)*$1);
+}
+%typemap(pytyping) short *OutReplace "str"
+%apply short *OutReplace { short *OutReplace2 };
+
+/* Like (short **short_list, size_t *short_list_len) except that it replaces everything
+   returned before it rather than appending to it. This is the case reported in #3469 -
+   the function return value is dropped, so the annotation is the type the typemap builds
+   rather than a list containing it. */
+%typemap(in, numinputs=0) (short **short_list_replace)(short*temp) { $1 = &temp; }
+%typemap(freearg) (short **short_list_replace) { free(*$1); }
+%typemap(argout, overwrite=1) (short **short_list_replace, size_t *short_list_len) {
+  PyObject *list = PyList_New(*$2);
+  for (size_t i = 0; i < *$2; i++)
+    PyList_SetItem(list, i, PyLong_FromLong((*$1)[i]));
+  Py_XDECREF($result);
+  $result = list;
+}
+%typemap(pytyping) (short **short_list_replace, size_t *short_list_len) "typing.List[int]"
+
+/* An out typemap using numoutputs=0 turns the function return value into an exception,
+   so it is not one of the returned values and is not part of the annotation. This is the
+   case reported in #3084. */
+%typemap(out, numoutputs=0) MyErr ""
+%typemap(ret) MyErr %{
+  if ($1 != 0) {
+    PyErr_Format(PyExc_RuntimeError, "error code %d", (int)$1);
+    SWIG_fail;
+  }
+%}
+
+/* An argout typemap building a tuple rather than the list SWIG_AppendOutput builds.
+   The helper is in a fragment so that it is only emitted when a typemap using it is. */
+%fragment("AppendOutput_Tuple", "header") %{
+SWIGINTERN PyObject *AppendOutput_Tuple(PyObject *result, PyObject *obj, int isvoidresult) {
+  PyObject *tmp, *joined;
+  if (!result)
+    return obj;
+  if (result == Py_None && isvoidresult) {
+    Py_DECREF(result);
+    return obj;
+  }
+  if (!PyTuple_Check(result)) {
+    tmp = PyTuple_New(1);
+    PyTuple_SET_ITEM(tmp, 0, result);
+    result = tmp;
+  }
+  tmp = PyTuple_New(1);
+  PyTuple_SET_ITEM(tmp, 0, obj);
+  joined = PySequence_Concat(result, tmp);
+  Py_DECREF(result);
+  Py_DECREF(tmp);
+  return joined;
+}
+%}
+
+%typemap(in, numinputs=0) short *OutTuple (short temp) { $1 = &temp; }
+%typemap(argout, container="tuple", fragment="AppendOutput_Tuple") short *OutTuple {
+  $result = AppendOutput_Tuple($result, PyLong_FromLong(*$1), $isvoidresult);
+}
+%typemap(pytyping) short *OutTuple "int"
+%apply short *OutTuple { short *OutTuple2 };
+
+/* An overwriting argout typemap that builds the tuple the ones after it append into. */
+%typemap(in, numinputs=0) short *OutTupleReplace (short temp) { $1 = &temp; }
+%typemap(argout, overwrite=1, container="tuple") short *OutTupleReplace {
+  Py_XDECREF($result);
+  $result = PyTuple_New(1);
+  PyTuple_SET_ITEM($result, 0, PyLong_FromLong(*$1));
+}
+%typemap(pytyping) short *OutTupleReplace "int"
+
+/* An overwriting argout typemap that builds a list holding the value it adds. The container
+   it names is what it assigns, so a single value is in the list too. */
+%typemap(in, numinputs=0) short *OutListReplace (short temp) { $1 = &temp; }
+%typemap(argout, overwrite=1, container="list") short *OutListReplace {
+  Py_XDECREF($result);
+  $result = PyList_New(1);
+  PyList_SetItem($result, 0, PyLong_FromLong(*$1));
+}
+%typemap(pytyping) short *OutListReplace "int"
+
+/* The container attribute names the container the typemap appends into and is not restricted
+   to the list and tuple that Python knows how to annotate. This one builds a string. */
+%fragment("AppendOutput_Str", "header") %{
+SWIGINTERN PyObject *AppendOutput_Str(PyObject *result, PyObject *obj, int isvoidresult) {
+  PyObject *joined;
+  if (!result)
+    return obj;
+  if (result == Py_None && isvoidresult) {
+    Py_DECREF(result);
+    return obj;
+  }
+  joined = PyUnicode_Concat(result, obj);
+  Py_DECREF(result);
+  Py_DECREF(obj);
+  return joined;
+}
+%}
+
+%typemap(in, numinputs=0) char *OutChar (char temp) { $1 = &temp; }
+%typemap(argout, container="str", fragment="AppendOutput_Str") char *OutChar {
+  $result = AppendOutput_Str($result, PyUnicode_FromStringAndSize($1, 1), $isvoidresult);
+}
+%typemap(pytyping) char *OutChar "str"
+%apply char *OutChar { char *OutChar2 };
+
+/* Python annotates the list and tuple containers and uses the catch-all type for any other,
+   as it cannot work out what a container it does not know about holds. There is no clash and
+   so no warning 478, and the python:annotations:catchall feature supplies the type just as it
+   does for a clash. */
+%feature("python:annotations:catchall") argoutStrTwoCharsTyped "str"
+
+/* Argout typemaps naming different containers cannot agree on what $result is, so the type
+   of the values returned cannot be worked out and warning 478 is issued. What is returned
+   then depends on the order the argout typemaps run in: whichever runs first is the one
+   holding everything before it, so the two functions below return the same values nested
+   the opposite way round. The catch-all type covers both. */
+%warnfilter(SWIGWARN_TYPEMAP_ARGOUT_CONTAINER_MISMATCH) argoutBoolTupleThenAppend;
+%warnfilter(SWIGWARN_TYPEMAP_ARGOUT_CONTAINER_MISMATCH) argoutBoolAppendThenTuple;
+
+/* Warning 478 says only that SWIG cannot work the type out, not that there is no type, so
+   the python:annotations:catchall feature supplies it in place of the catch-all type. The
+   feature also suppresses the warning, which the test-suite building with -Werror checks,
+   as there is nothing left for it to report. */
+%feature("python:annotations:catchall") argoutBoolTupleThenAppendTyped "typing.List[typing.Union[typing.Tuple[bool, int], int]]"
+
 %inline %{
 #include <cstddef>
+
+typedef int MyErr;
 
 struct ArgoutConstructor {
   int value;
@@ -318,6 +485,140 @@ bool argoutBoolAppendTwice(bool arg, short *OutAppend, short *OutAppend2) {
   return arg;
 }
 
+bool argoutBoolCheckOnly(bool arg, short *OutCheck) {
+  *OutCheck = 0;
+  return arg;
+}
+
+void argoutVoidCheckOnly(bool arg, short *OutCheck) {
+  (void)arg;
+  *OutCheck = 0;
+}
+
+bool argoutBoolCheckAndAppend(bool arg, short *OutCheck, short *OutAppend) {
+  *OutCheck = 0;
+  *OutAppend = 42;
+  return arg;
+}
+
+void argoutVoidReplace(bool arg, short *OutReplace) {
+  (void)arg;
+  *OutReplace = 42;
+}
+
+void argoutVoidReplaceTwice(bool arg, short *OutReplace, short *OutReplace2) {
+  (void)arg;
+  *OutReplace = 42;
+  *OutReplace2 = 43;
+}
+
+bool argoutBoolReplaceTwice(bool arg, short *OutReplace, short *OutReplace2) {
+  *OutReplace = 42;
+  *OutReplace2 = 43;
+  return arg;
+}
+
+bool argoutBoolReplace(bool arg, short *OutReplace) {
+  (void)arg;
+  *OutReplace = 42;
+  return arg;
+}
+
+bool argoutBoolAppendThenReplace(bool arg, short *OutAppend, short *OutReplace) {
+  (void)arg;
+  *OutAppend = 42;
+  *OutReplace = 43;
+  return arg;
+}
+
+bool argoutBoolReplaceThenAppend(bool arg, short *OutReplace, short *OutAppend) {
+  (void)arg;
+  *OutReplace = 42;
+  *OutAppend = 43;
+  return arg;
+}
+
+void argoutVoidTupleSingle(short *OutTuple) {
+  *OutTuple = 42;
+}
+
+bool argoutBoolTupleSingle(bool arg, short *OutTuple) {
+  *OutTuple = 42;
+  return arg;
+}
+
+void argoutVoidTupleTwice(short *OutTuple, short *OutTuple2) {
+  *OutTuple = 42;
+  *OutTuple2 = 43;
+}
+
+bool argoutBoolTupleTwice(bool arg, short *OutTuple, short *OutTuple2) {
+  *OutTuple = 42;
+  *OutTuple2 = 43;
+  return arg;
+}
+
+void argoutVoidTupleReplaceOnly(short *OutTupleReplace) {
+  *OutTupleReplace = 41;
+}
+
+bool argoutBoolTupleReplaceOnly(bool arg, short *OutTupleReplace) {
+  (void)arg;
+  *OutTupleReplace = 41;
+  return arg;
+}
+
+bool argoutBoolListReplaceOnly(bool arg, short *OutListReplace) {
+  (void)arg;
+  *OutListReplace = 41;
+  return arg;
+}
+
+bool argoutBoolTupleReplaceThenAppend(bool arg, short *OutTupleReplace, short *OutTuple) {
+  (void)arg;
+  *OutTupleReplace = 41;
+  *OutTuple = 42;
+  return arg;
+}
+
+bool argoutBoolTupleThenAppend(bool arg, short *OutTuple, short *OutAppend) {
+  *OutTuple = 42;
+  *OutAppend = 43;
+  return arg;
+}
+
+bool argoutBoolAppendThenTuple(bool arg, short *OutAppend, short *OutTuple) {
+  *OutAppend = 43;
+  *OutTuple = 42;
+  return arg;
+}
+
+bool argoutBoolTupleThenAppendTyped(bool arg, short *OutTuple, short *OutAppend) {
+  *OutTuple = 42;
+  *OutAppend = 43;
+  return arg;
+}
+
+void argoutStrOneChar(char *OutChar) {
+  *OutChar = 'a';
+}
+
+void argoutStrTwoChars(char *OutChar, char *OutChar2) {
+  *OutChar = 'a';
+  *OutChar2 = 'b';
+}
+
+void argoutStrTwoCharsTyped(char *OutChar, char *OutChar2) {
+  *OutChar = 'a';
+  *OutChar2 = 'b';
+}
+
+const char *argoutStrResultAndTwoChars(char *OutChar, char *OutChar2) {
+  *OutChar = 'a';
+  *OutChar2 = 'b';
+  return "Z";
+}
+
 void argoutMultiarg(short **short_list, size_t *short_list_len) {
   *short_list = NULL;
   *short_list_len = 0;
@@ -353,7 +654,83 @@ bool argoutBoolMultiargBetweenFirstLast(int first, short **short_list, size_t *s
   *short_list_len = 0;
   return first != 0 && last != 0.0;
 }
+
+MyErr argoutSuppressedSingleAppend(int code, short *OutAppend) {
+  *OutAppend = 42;
+  return code;
+}
+
+MyErr argoutSuppressedAppendTwice(int code, short *OutAppend, short *OutAppend2) {
+  *OutAppend = 42;
+  *OutAppend2 = 43;
+  return code;
+}
+
+MyErr argoutSuppressedCheckOnly(int code, short *OutCheck) {
+  *OutCheck = 0;
+  return code;
+}
+
+MyErr argoutSuppressedNoArgout(int code) {
+  return code;
+}
+
+void argoutMultiargReplace(short **short_list_replace, size_t *short_list_len) {
+  *short_list_replace = NULL;
+  *short_list_len = 0;
+}
+
+bool argoutBoolMultiargReplace(bool arg, short **short_list_replace, size_t *short_list_len) {
+  *short_list_replace = NULL;
+  *short_list_len = 0;
+  return arg;
+}
+
+void argoutMultiargReplaceAfterFirst(int first, short **short_list_replace, size_t *short_list_len) {
+  (void)first;
+  *short_list_replace = NULL;
+  *short_list_len = 0;
+}
+
+bool argoutBoolMultiargReplaceAfterFirst(int first, short **short_list_replace, size_t *short_list_len) {
+  *short_list_replace = NULL;
+  *short_list_len = 0;
+  return first != 0;
+}
+
+void argoutMultiargReplaceBetweenFirstLast(int first, short **short_list_replace, size_t *short_list_len, double last) {
+  (void)first;
+  (void)last;
+  *short_list_replace = NULL;
+  *short_list_len = 0;
+}
+
+bool argoutBoolMultiargReplaceBetweenFirstLast(int first, short **short_list_replace, size_t *short_list_len, double last) {
+  *short_list_replace = NULL;
+  *short_list_len = 0;
+  return first != 0 && last != 0.0;
+}
 %}
 
 // A class-typed %constant is annotated at module level.
 %constant MyStruct *CONST_STRUCT = 0;
+
+%apply int *INPUT { short *IN1, short *IN2 };
+
+/* The reference forms reject a null pointer, so they are annotated with the plain type,
+   unlike the pointer forms which accept one and are annotated with typing.Optional. */
+%apply int &INPUT  { int &refIn };
+%apply int &OUTPUT { int &refOut };
+%apply int &INOUT  { int &refInOut };
+
+%inline %{
+
+void singleOutput(int x, int y, int *OUTPUT) {}
+bool twoInputs(short *IN1, short *IN2) { return true; }
+void inout(int x, int *INOUT) {}
+
+void refInput(int &refIn) {}
+void refOutput(int &refOut) {}
+void refInout(int &refInOut) {}
+
+%}
