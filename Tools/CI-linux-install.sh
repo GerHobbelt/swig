@@ -9,11 +9,15 @@ if [[ "$compiler" = 'clang' ]]; then
 	CC="clang"
 	CXX="clang++"
 elif [[ -n "$GCC" ]]; then
-	$RETRY sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-	$RETRY sudo apt-get -qq update
-	$RETRY sudo apt-get -qq install g++-$GCC
 	CC="gcc-$GCC"
 	CXX="g++-$GCC"
+	if ! dpkg -l 'g++*' | grep "^ii  $CXX " > /dev/null; then
+		$RETRY sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+		$RETRY sudo apt-get -qq update
+		$RETRY sudo apt-get -qq install g++-$GCC
+	else
+		$RETRY sudo apt-get -qq update
+	fi
 else
 	$RETRY sudo apt-get -qq update
 	CC="gcc"
@@ -113,11 +117,7 @@ case "$SWIGLANG" in
 		$RETRY sudo apt-get -qq install guile-${VER:-2.2}-dev
 		;;
 	"lua")
-		if [[ -z "$VER" ]]; then
-			$RETRY sudo apt-get -qq install lua5.2 liblua5.2-dev
-		else
-			$RETRY sudo apt-get -qq install lua${VER} liblua${VER}-dev
-		fi
+		$RETRY sudo apt-get -qq install lua${VER} liblua${VER}-dev
 		;;
 	"ocaml")
 		$RETRY sudo apt-get -qq install ocaml camlp4

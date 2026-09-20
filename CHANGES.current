@@ -7,11 +7,274 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.5.0 (in progress)
 ===========================
 
+2026-06-04: Nerixyz
+            [Python] #3414 Fix PEP 484 type annotations for multi-argument
+            pytyping typemaps.  A typemap matching more than one argument, such
+            as %typemap(pytyping) (int argc, char **argv), is now applied to the
+            whole argument group, so the generated annotation uses the type from
+            the typemap instead of only annotating the first argument with its
+            plain C++ type.
+
+2026-06-02: wsfulton
+            #2694 Improve resolution of qualified names whose scope qualifier is
+            reached through a typedef, including a typedef to a template
+            instantiation.  A using declaration such as
+            'using BaseAlias::Me::Integer;', where 'BaseAlias' and 'Me' are
+            typedefs naming a class, previously gave a 'Nothing known about ...'
+            warning (Warning 315).  This includes a typedef to a template
+            instantiation whose template name is itself introduced by a using
+            declaration.  It now resolves.
+
+2026-06-01: wsfulton
+            [Go] Fix crash (null pointer dereference) on the first call to a
+            director method returning a reference or pointer type, such as
+            int&, const int& or a class pointer.
+
+2026-06-01: jschueller
+	    [Go] #3441 Fix director returning reference to local variable in int&
+            and int&& typemaps.
+
+2026-05-31: wsfulton
+            [Ruby] #3385 Fix segmentation fault when using STL containers of
+            swig::GC_VALUE - the type that wraps an arbitrary Ruby object - such
+            as std::vector<swig::GC_VALUE> or a std::map or std::set with a
+            swig::BinaryPredicate comparator proc, while the Ruby 3.x garbage
+            collector compacts the heap (GC.compact or GC.auto_compact).  The
+            Ruby objects stored in such containers are now retained correctly
+            across a compaction, instead of occasionally crashing the interpreter.
+
+2026-05-30: erezgeva
+            [Lua] #3394 Drop support for Lua 5.0 and Lua 5.1.
+            Minimum supported Lua version is now 5.2.
+            SWIG no longer compiles wrappers for Lua 5.0 or 5.1
+            (this includes LuaJIT consumers still using the 5.1 ABI).
+
+            Removed -squash-bases command-line option
+            (and the SWIG_LUA_SQUASH_BASES runtime path).
+            The implementation was broken;
+            classes now always use the standard base-lookup path.
+
+            Using this command-line option will generate error
+
+                swig error : Unrecognized option -squash-bases
+
+            Removed deprecated -no-old-metatable-bindings command-line option.
+            Old-style metatable bindings are always generated,
+            matching the long-standing default.
+
+            Using this command-line option will generate error
+
+                swig error : Unrecognized option -no-old-metatable-bindings
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2026-05-30: wsfulton
+            C++17: parse user-defined deduction guides used for class
+            template argument deduction, for example:
+
+                template <typename T> struct Box { Box(T); };
+
+                Box(int) -> Box<int>;                     // non-template deduction guide
+                template <typename T> Box(T) -> Box<T>;   // templated deduction guide
+
+            A guide is written at the same scope as the class template, either
+            as a non-template declaration or, when itself a template, under a
+            template parameter list.  A deduction guide is not a function and
+            emits no symbol - it only steers argument deduction at compile time -
+            so there is nothing to wrap and SWIG parses and ignores it.
+            Previously any deduction guide resulted in a syntax error.
+
+2026-05-28: wsfulton
+            #2951 A using-declaration whose qualifier is a type-template
+            parameter used directly as the base class - the mixin idiom -
+
+                template <typename I>
+                struct Derived : I {
+                  using I::I;
+                  using I::call;
+                };
+
+            now has its template parameter substituted during instantiation,
+            so wrappers for the inherited members - including inheriting
+            constructors via 'using I::I;' - are emitted on the instantiated
+            derived class. Previously SWIG warned "Nothing known about
+            'I::call'" and no wrapper was generated.
+
+2026-05-27: wsfulton
+            C++20: parse and support constrained alias templates.  Both the
+            type-constraint shorthand and the requires-clause long form are
+            now accepted:
+
+              template<Numeric T>                       using NumBox = Box<T>;
+              template<typename T> requires Numeric<T>  using ReqBox = Box<T>;
+
+            The requires-clause form previously resulted in a syntax error.
+
+            Both forms wrap identically to an unconstrained alias template.
+            Note that the constraint does not affect the generated wrappers.
+            The C++ compiler enforces it when compiling the emitted
+            wrapper.  Wrapping continues to use the documented two-step
+            pattern: %template(Name) on the underlying template, followed by
+            an empty %template() for each alias.
+
+2026-05-26: wsfulton
+            [Python] Class docstrings under -builtin now match the non-builtin
+            proxy module. When neither %feature("docstring") nor a doxygen
+            comment is supplied, inspect.getdoc(MyClass) previously returned
+            the qualified C++ name such as "::MyClass"; it now returns
+            "Proxy of C++ MyClass class." (or "Proxy of C MyStruct struct.")
+            when %feature("autodoc") is enabled, and the empty string
+            otherwise. Alternative documentation strings can of course still
+            be set via %feature("python:tp_doc", "...") on the class.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2026-05-25: wsfulton
+            [Python] %nokwargs on an individual function now correctly opts that
+            function out of keyword argument handling using the -keyword option
+            or a module-wide %feature("kwargs") has enabled kwargs globally. The
+            change is visible under -builtin, where the affected function's
+            wrapper is now generated with METH_VARARGS instead of
+            METH_VARARGS|METH_KEYWORDS, so calling it by keyword raises
+            TypeError as expected. Previously, %nokwargs was silently ignored
+            once -keyword was passed.
+
+2026-05-25: wsfulton, jschueller
+            #3448 Fix ccache-swig (and the bundled CCache test suite) failing
+            cache lookups when used with Apple clang 21 or upstream LLVM
+            clang 21.  These compilers now emit
+                clang: warning: argument unused during compilation: '-c' [-Wunused-command-line-argument]
+            when -c and -E are passed together.  ccache-swig invoked the
+            preprocessor as "cc -c -E foo.c" and hashed its stderr, so the
+            warning text was folded into the cache key and prevented a cache hit
+            between compiling foo.c and the equivalent preprocessed foo.i.
+            ccache-swig now omits -c when invoking the preprocessor.
+
+2026-05-24: wsfulton
+            Fixed a one-byte buffer overflow in the cdata.i memmove typemap that
+            occurred when the data length exactly matched the destination buffer size.
+
+2026-05-20: erezgeva
+            [Guile, JavaScript, Python, Scilab, Tcl] #3383 The cdata.i library
+            functions (cdata, memmove and similar) now use a binary data type
+            instead of a string, so that all byte values 0-255 round-trip
+            correctly.
+
+            The target language type used by the cdata.i functions has changed:
+
+              - Python:     bytes object (was str)
+              - JavaScript: Uint8Array (was string)
+              - Tcl:        list of integers (was string)
+              - Scilab:     list of uint8 values (was string)
+
+            In Python, passing a str now fails with:
+
+                TypeError: in method 'memmove', argument 2 of type 'void const *'
+
+            so pass a bytes object instead. Guile cdata now also handles all
+            byte values correctly.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2026-05-19: jmarrec
+            #3415 Fix segmentation fault when a class declares a public
+            'using Base::method;' that names a base-class member template with
+            no %template instantiations and also declares a protected concrete
+            override of the same name.
+
+2026-05-16: erezgeva
+            [Lua, Octave, Perl, PHP, Python, Ruby, Scilab, Tcl] #3409 Add memory allocation
+            failure protection to the argcargv typemaps and to the string duplication paths
+            in pystrings.swg, perlstrings.swg, rubystrings.swg and rfragments.swg.
+
+            Potentially incompatible change: the `%new_copy_array` macro
+            has been removed. User interface files calling `%new_copy_array(ptr, size, T)`
+            will be passed through to the C/C++ compiler unchanged and fail with
+            an error such as:
+
+                error: expected expression before '%' token
+
+            Replace such calls with an explicit allocate and copy that checks
+            for allocation failure, e.g.
+
+                T *p = %new_array(size, T);
+                if (p) memcpy(p, ptr, size * sizeof(T));
+
+            Potentially incompatible change: the `%typemaps_string` macro in
+            `Lib/typemaps/strings.swg` now takes an additional argument naming a
+            `SWIG_NewCopyCharArray` style fragment, and the related
+            `%typemaps_string_alloc` macro has been removed (its allocator
+            customisation is now expressed by passing the new argument to
+            `%typemaps_string` directly). Existing callers of
+            `%typemaps_string` with the old signature will fail with:
+
+                Error: Macro '%typemaps_string' expects 13 arguments
+
+            Existing callers of `%typemaps_string_alloc` will fail with:
+
+                Error: Unknown directive '%typemaps_string_alloc'.
+
+            Update such calls to pass the additional fragment, modelled on
+            `SWIG_NewCopyWCharArray` in `Lib/typemaps/wstring.swg`.
+
+	    *** POTENTIAL INCOMPATIBILITY ***
+
+2026-05-18: wsfulton
+            [Python] Doxygen comments on constructors are now emitted on
+            __init__ when wrapping with -builtin, matching the default
+            (non-builtin) behaviour.  Previously inspect.getdoc(Cls.__init__)
+            returned the generic "Initialize self.  See help(type(self)) for
+            accurate signature." regardless of the Doxygen documentation on
+            the C++ constructor.
+
 2026-05-15: blowekamp
             [R] #3407 Fix compilation with R 4.6.0 which removed the non-API macro
             SET_S4_OBJECT and made CHARACTER_POINTER return a const pointer.
             Use Rf_asS4, SET_STRING_ELT and STRING_ELT instead. These replacement
             APIs have been available since R 2.x so no version guards are required.
+
+2026-05-28: wsfulton
+            C++17: parse and support pack expansion in a using-declaration
+            (P0195), e.g.
+
+              template <typename... Ts>
+              struct Overloaded : Ts... {
+                using Ts::operator()...;
+              };
+
+            The names introduced by the using-declaration depend on an
+            unexpanded template parameter pack, so SWIG accepts the syntax
+            but produces no wrappers until %template instantiates the
+            class.  %template now expands the pack using-declaration into
+            one concrete using-declaration per base type, so the
+            instantiated proxy class has a wrapper for each inherited
+            member - matching how an ordinary 'using Base::name;' inside
+            a class template behaves after instantiation.
+
+            Combined with %rename(call) *::operator(); the proxy of
+            Overloaded<IntCase, DoubleCase> has overloaded call(int) and
+            call(double) methods that dispatch to the matching base.
+
+2026-05-14: wsfulton
+            C++17: detect class template argument deduction (CTAD) in a
+            variable declaration, where a variable is declared with a bare
+            class template name and the template arguments are deduced from
+            the initializer, e.g.
+
+              template <typename T>
+              struct Box {
+                T value;
+                Box(T v) : value(v) {}
+              };
+
+              Box bx{42};   // CTAD deduces Box<int> from the constructor
+
+            (and, with C++20 P1816, also for aggregates with no deduction
+            guide).  CTAD is only valid for variables, so this is the only
+            declaration kind affected.  SWIG performs no template argument
+            deduction, so it now issues Warning 347 and skips the variable
+            instead of generating uncompilable wrapper code that names the
+            template without arguments.
 
 2026-05-12: wsfulton
             C++20: %template can now instantiate abbreviated function templates
