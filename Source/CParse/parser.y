@@ -628,6 +628,24 @@ static int inheriting_ctor_base_match(Node *cls, String *unqualified_id) {
   return 0;
 }
 
+/* A member function declared through a typedef of a function type, such as 'F f;' after 'typedef int F(int) &&;', takes
+ * the ref-qualifier of the typedef so that it is handled like the member function written out in full.  A typedef naming
+ * such a typedef takes it too, so a chain of typedefs is followed.  The ref-qualifier in a pointer to member function
+ * typedef, such as 'typedef int (V::*MP)(int) &&;', is part of the pointer type so is not taken. */
+static void inherit_typedef_refqualifier(Node *n) {
+  SwigType *type = Getattr(n, "type");
+  SwigType *decl = Getattr(n, "decl");
+  if (type && (!decl || Len(decl) == 0)) {
+    Node *td = Swig_symbol_clookup(type, 0);
+    if (td && Equal(nodeType(td), "cdecl") && Equal(Getattr(td, "storage"), "typedef")) {
+      SwigType *tddecl = Getattr(td, "decl");
+      String *refqualifier = Getattr(td, "refqualifier");
+      if (refqualifier && (!tddecl || Len(tddecl) == 0 || SwigType_isfunction(tddecl)))
+        Setattr(n, "refqualifier", refqualifier);
+    }
+  }
+}
+
 /* Add declaration list to symbol table */
 static int  add_only_one = 0;
 
@@ -850,12 +868,15 @@ static void add_symbols(Node *n) {
     if (cparse_cplusplus) {
       String *value = Getattr(n, "value");
       SwigType *auto_type = Getattr(n, "type");
+      int istypedef = Equal(Getattr(n, "storage"), "typedef");
       if (value && Strcmp(value, "delete") == 0) {
 	/* C++11 deleted definition / deleted function */
         SetFlag(n,"deleted");
         SetFlag(n,"feature:ignore");
       }
-      if (SwigType_isrvalue_reference(Getattr(n, "refqualifier"))) {
+      if (iscdecl && (inclass || istypedef))
+        inherit_typedef_refqualifier(n);
+      if (!istypedef && SwigType_isrvalue_reference(Getattr(n, "refqualifier"))) {
 	/* Ignore rvalue ref-qualifiers by default
 	 * Use Getattr instead of GetFlag to handle explicit ignore and explicit not ignore */
 	if (!(Getattr(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0)) {
@@ -2252,7 +2273,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <id>       pragma_lang;
 %type <str>      pragma_arg;
 %type <includetype> includetype;
-%type <type>     pointer primitive_type;
+%type <type>     pointer primitive_type type_id_pointer;
 %type <decl>     declarator direct_declarator notso_direct_declarator parameter_declarator plain_declarator;
 %type <decl>     abstract_declarator abstract_declarator_no_memberpointer direct_abstract_declarator ctor_end;
 %type <tmap>     typemap_type;
@@ -3026,8 +3047,7 @@ static SwigType *string_literal_type(const struct Define *dtype) {
 
   if (unsupported_literal_prefix(dtype->literalprefix))
     return 0;
-  /* A wide literal reaches the grammar as T_WSTRING, except for a raw one, whose L is only in the prefix. */
-  type = NewString(dtype->type == T_WSTRING || literal_encoding(dtype->literalprefix) == SWIG_LITERAL_WIDE ? "wchar_t" : "char");
+  type = NewString(dtype->type == T_WSTRING ? "wchar_t" : "char");
   bound = NewStringf("%d", Len(dtype->stringval) + 1);
   SwigType_add_qualifier(type, "const");
   SwigType_add_array(type, bound);
@@ -3389,6 +3409,48 @@ static void add_array_from_scanner(SwigType *type) {
     SwigType_push(type, arrays);
   Delete(arrays);
   Delete(bound);
+}
+
+/* Decode the UTF-8 'text' that the scanner stores for a wide character literal, returning the code point of
+   its single character, or -1 if 'text' is not a single character. A hexadecimal or octal escape sequence in
+   the literal is encoded as UTF-8 by put_escape_value() in scanner.c, while a character written as itself is
+   copied unchanged from the source file, so it is UTF-8 only in a UTF-8 source file. Either way, an ASCII
+   character is a single char. A code point is the number Unicode assigns to a character and is the value of a
+   wide character literal holding it. For example:
+
+     Literal                              'text' (UTF-8 bytes)   Returns
+     L'A' or L'\x41'                      41                     0x41
+     L'\xF1' or the n with tilde itself   C3 B1                  0xF1
+     L'\x263A' or the smiley face itself  E2 98 BA               0x263A
+*/
+static long wide_char_code_point(String *text) {
+  const unsigned char *s = (const unsigned char *)Char(text);
+  int len = Len(text);
+  int extra;
+  int i;
+  long code_point;
+  if (len == 1)
+    return s[0];
+  if ((s[0] & 0xE0) == 0xC0) {
+    code_point = s[0] & 0x1F;
+    extra = 1;
+  } else if ((s[0] & 0xF0) == 0xE0) {
+    code_point = s[0] & 0x0F;
+    extra = 2;
+  } else if ((s[0] & 0xF8) == 0xF0) {
+    code_point = s[0] & 0x07;
+    extra = 3;
+  } else {
+    return -1;
+  }
+  if (len != extra + 1)
+    return -1;
+  for (i = 1; i <= extra; i++) {
+    if ((s[i] & 0xC0) != 0x80)
+      return -1;
+    code_point = (code_point << 6) | (s[i] & 0x3F);
+  }
+  return code_point;
 }
 
 static Node *new_enum_node(SwigType *enum_base_type) {
@@ -7772,6 +7834,25 @@ def_args       : EQUAL definetype {
                  $$.val = $array_type_id;
                  $$.type = T_UNKNOWN;
                }
+               | EQUAL expr type_id_pointer {
+                 /* A pointer or reference type-id, such as the 'int *' default of 'template<class T = int *>', with the
+                    base type parsed as an expression */
+                 $$ = default_dtype;
+                 $$.val = Copy($expr.val);
+                 SwigType_push($$.val, $type_id_pointer);
+                 $$.type = T_UNKNOWN;
+                 Delete($type_id_pointer);
+               }
+               | EQUAL expr type_id_pointer new_array_declarator {
+                 /* An array of pointers type-id, such as 'int *[2]' */
+                 $$ = default_dtype;
+                 $$.val = Copy($expr.val);
+                 SwigType_push($$.val, $type_id_pointer);
+                 SwigType_push($$.val, $new_array_declarator);
+                 $$.type = T_UNKNOWN;
+                 Delete($type_id_pointer);
+                 Delete($new_array_declarator);
+               }
                | EQUAL LBRACE {
 		 if (skip_balanced('{','}') < 0) Exit(EXIT_FAILURE);
 		 $$ = default_dtype;
@@ -7786,6 +7867,41 @@ def_args       : EQUAL definetype {
                  $$.type = T_UNKNOWN;
                }
                ;
+
+/* The pointer and reference declarator of a type-id following a type parsed as an expression in 'def_args'.  It is right
+   recursive, unlike 'pointer', so that the token after each '*' decides between a pointer and a multiplication or a
+   dereference, such as 'int **' and 'a * *b'. */
+type_id_pointer : STAR {
+                  $$ = NewStringEmpty();
+                  SwigType_add_pointer($$);
+                }
+                | STAR type_qualifier {
+                  $$ = NewStringEmpty();
+                  SwigType_add_pointer($$);
+                  SwigType_push($$, $type_qualifier);
+                }
+                | STAR type_id_pointer[in] {
+                  $$ = NewStringEmpty();
+                  SwigType_add_pointer($$);
+                  SwigType_push($$, $in);
+                  Delete($in);
+                }
+                | STAR type_qualifier type_id_pointer[in] {
+                  $$ = NewStringEmpty();
+                  SwigType_add_pointer($$);
+                  SwigType_push($$, $type_qualifier);
+                  SwigType_push($$, $in);
+                  Delete($in);
+                }
+                | AND {
+                  $$ = NewStringEmpty();
+                  SwigType_add_reference($$);
+                }
+                | LAND {
+                  $$ = NewStringEmpty();
+                  SwigType_add_rvalue_reference($$);
+                }
+                ;
 
 /* A new-expression such as 'new int(5)', 'new (buffer) Widget{1, 2}' or 'new double[n]', typed as the pointer it creates.
    Parsed only at the start of an initialiser or default argument, see new_expression_dtype() for the rest. */
@@ -7884,7 +8000,8 @@ new_type_id    : type
                  }
                ;
 
-/* The array bounds of a new-expression type-id, the first of which can be any expression, as in 'new int[n][3]'. */
+/* The array bounds of a new-expression type-id, the first of which can be any expression, as in 'new int[n][3]', and of
+   an array of pointers type-id default in 'def_args', as in 'int *[][3]'. */
 new_array_declarator : LBRACKET expr RBRACKET {
                    $$ = NewStringEmpty();
                    SwigType_add_array($$, $expr.val);
@@ -8301,19 +8418,26 @@ direct_declarator : idcolon {
 		    }
 		    $$.type = $pointer;
                   }
+                  /* The reference applies to what the inner declarator yields, such as the return type in 'int (&f())(int)' */
                   | LPAREN AND direct_declarator[in] RPAREN {
+                    SwigType *t = NewStringEmpty();
                     $$ = $in;
-		    if (!$$.type) {
-		      $$.type = NewStringEmpty();
-		    }
-		    SwigType_add_reference($$.type);
+                    SwigType_add_reference(t);
+                    if ($$.type) {
+                      SwigType_push(t, $$.type);
+                      Delete($$.type);
+                    }
+                    $$.type = t;
                   }
                   | LPAREN LAND direct_declarator[in] RPAREN {
+                    SwigType *t = NewStringEmpty();
                     $$ = $in;
-		    if (!$$.type) {
-		      $$.type = NewStringEmpty();
-		    }
-		    SwigType_add_rvalue_reference($$.type);
+                    SwigType_add_rvalue_reference(t);
+                    if ($$.type) {
+                      SwigType_push(t, $$.type);
+                      Delete($$.type);
+                    }
+                    $$.type = t;
                   }
                   | LPAREN idcolon DSTAR declarator RPAREN {
 		    SwigType *t;
@@ -8994,7 +9118,15 @@ edecl          :  identifier {
 		   SetFlag($$,"feature:immutable");
 		   Setattr($$,"enumvalue", $etype.val);
 		   if ($etype.stringval) {
-		     Setattr($$, "enumstringval", $etype.stringval);
+                     long code_point = $etype.type == T_WCHAR ? wide_char_code_point($etype.stringval) : -1;
+                     if (code_point >= 0) {
+                       /* A wide character is also given as a number, the only portable form when it is not ASCII */
+                       String *numval = NewStringf("%ld", code_point);
+                       Setattr($$, "enumnumval", numval);
+                       Delete(numval);
+                     }
+                     if (code_point <= 0x7F)
+                       Setattr($$, "enumstringval", $etype.stringval);
 		   }
 		   if ($etype.numval) {
 		     Setattr($$, "enumnumval", $etype.numval);
@@ -9013,7 +9145,7 @@ etype            : expr {
 		       ($$.type != T_LONGLONG) && ($$.type != T_ULONGLONG) &&
 		       ($$.type != T_SHORT) && ($$.type != T_USHORT) &&
 		       ($$.type != T_SCHAR) && ($$.type != T_UCHAR) &&
-		       ($$.type != T_CHAR) && ($$.type != T_BOOL) &&
+		       ($$.type != T_CHAR) && ($$.type != T_WCHAR) && ($$.type != T_BOOL) &&
 		       ($$.type != T_UNKNOWN) && ($$.type != T_USER)) {
 		     Swig_error(cparse_file,cparse_line,"Type error. Expecting an integral type\n");
 		   }
@@ -9312,9 +9444,15 @@ exprsimple     : exprnum
 		  }
 	       }
 	       | WCHARCONST {
+                  long code_point = wide_char_code_point($WCHARCONST.text);
 		  $$ = default_dtype;
                   $$.stringval = $WCHARCONST.text;
-                  $$.val = NewStringf("L'%(escape)s'", $WCHARCONST.text);
+                  if (code_point > 0x7F) {
+                    /* Not ASCII, so the scanned text is a UTF-8 encoding that must not be escaped byte by byte */
+                    $$.val = NewStringf("L'\\x%lX'", code_point);
+                  } else {
+                    $$.val = NewStringf("L'%(escape)s'", $WCHARCONST.text);
+                  }
 		  $$.type = T_WCHAR;
                   $$.literal = LITERAL_CHARACTER;
                   $$.literalprefix = $WCHARCONST.prefix;
@@ -9356,7 +9494,8 @@ exprsimple     : exprnum
 
 /* In 'sizeof(X)' X can be a type or an expression.  X is not parsed, as the type of sizeof is always size_t, which SWIG
    handles as T_ULONG, so the text up to the closing ')' is skipped and used in the value of the expression.  A subscript
-   after it, as in the array count 'sizeof(a) / sizeof(a)[0]', is part of the operand, 'sizeof((a)[0])'. */
+   or member access after it, as in the array count 'sizeof(a) / sizeof(a)[0]' or in 'sizeof (p)->m', is part of the
+   operand, 'sizeof((a)[0])' or 'sizeof((p)->m)'. */
 sizeof_paren   : SIZEOF LPAREN {
                  if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
                  $$ = default_dtype;
@@ -9368,6 +9507,14 @@ sizeof_paren   : SIZEOF LPAREN {
                  if (skip_balanced('[', ']') < 0) Exit(EXIT_FAILURE);
                  $$ = $in;
                  append_expr_from_scanner($$.val);
+               }
+               | sizeof_paren[in] PERIOD ID {
+                 $$ = $in;
+                 Printf($$.val, ".%s", $ID);
+               }
+               | sizeof_paren[in] ARROW ID {
+                 $$ = $in;
+                 Printf($$.val, "->%s", $ID);
                }
                ;
 

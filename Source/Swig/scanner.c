@@ -384,12 +384,39 @@ static void retract(Scanner *s, int n) {
 }
 
 /* -----------------------------------------------------------------------------
- * get_escape()
+ * put_escape_value()
  *
- * Get escape sequence.  Called when a backslash is found in a string
+ * Append the value of a numeric escape sequence. In a wide character literal, a value that is not ASCII is appended as
+ * its UTF-8 encoding, as a UTF-8 source character already is, rather than truncated.
  * ----------------------------------------------------------------------------- */
 
-static void get_escape(Scanner *s) {
+static void put_escape_value(Scanner *s, int value, int wide_char) {
+  if (wide_char && value > 0x7F && value <= 0x10FFFF) {
+    if (value <= 0x7FF) {
+      Putc((char)(0xC0 | (value >> 6)), s->text);
+    } else {
+      if (value <= 0xFFFF) {
+        Putc((char)(0xE0 | (value >> 12)), s->text);
+      } else {
+        Putc((char)(0xF0 | (value >> 18)), s->text);
+        Putc((char)(0x80 | ((value >> 12) & 0x3F)), s->text);
+      }
+      Putc((char)(0x80 | ((value >> 6) & 0x3F)), s->text);
+    }
+    Putc((char)(0x80 | (value & 0x3F)), s->text);
+  } else {
+    Putc((char)value, s->text);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * get_escape()
+ *
+ * Get escape sequence.  Called when a backslash is found in a string or character literal, 'wide_char' being set for a
+ * wide character literal.
+ * ----------------------------------------------------------------------------- */
+
+static void get_escape(Scanner *s, int wide_char) {
   int result = 0;
   int state = 0;
   int c;
@@ -480,15 +507,15 @@ static void get_escape(Scanner *s) {
     case 11:  // Third digit of octal escape sequence
       if (c < '0' || c > '7') {
         retract(s, 1);
-        Putc((char)result, s->text);
+        put_escape_value(s, result, wide_char);
         return;
       }
       result = (result << 3) + (c - '0');
       Delitem(s->text, DOH_END);
       if (state == 11) {
-        if (result > 255)
+        if (result > 255 && !wide_char)
           Swig_error(Scanner_file(s), Scanner_line(s), "octal escape sequence out of range\n");
-        Putc((char)result, s->text);
+        put_escape_value(s, result, wide_char);
         return;
       }
       state = 11;
@@ -496,7 +523,7 @@ static void get_escape(Scanner *s) {
     case 20:
       if (!isxdigit(c)) {
         retract(s, 1);
-        Putc((char)result, s->text);
+        put_escape_value(s, result, wide_char);
         return;
       }
       if (isdigit(c))
@@ -540,6 +567,7 @@ static int look(Scanner *s) {
   int state = 0;
   int c = 0;
   String *str_delimiter = 0;
+  int wide_raw_string = 0; /* LR"XXXX(value)XXXX" rather than R"XXXX(value)XXXX" */
 
   Clear(s->text);
   s->start_line = s->line;
@@ -749,7 +777,7 @@ static int look(Scanner *s) {
           return SWIG_TOKEN_STRING;
         } else if (c == '\\') {
           Delitem(s->text, DOH_END);
-          get_escape(s);
+          get_escape(s, 0);
         }
       } else { /* Custom delimiter string: R"XXXX(value)XXXX" */
         if (c == ')') {
@@ -767,7 +795,7 @@ static int look(Scanner *s) {
             Delete(end_delimiter);                                /* Correct end delimiter )XXXX" occurred */
             Delete(str_delimiter);
             str_delimiter = 0;
-            return SWIG_TOKEN_STRING;
+            return wide_raw_string ? SWIG_TOKEN_WSTRING : SWIG_TOKEN_STRING;
           } else { /* Incorrect end delimiter occurred */
             if (c == EOF) {
               Swig_error(
@@ -1075,6 +1103,9 @@ static int look(Scanner *s) {
         save_literal_prefix(s);
         Clear(s->text);
         state = 79;
+      } else if (c == 'R') { /* Possibly CUSTOM DELIMITER wide string */
+        wide_raw_string = 1;
+        state = 72;
       } else if (isalnum(c) || (c == '_') || (c == '$'))
         state = 7;
       else {
@@ -1093,7 +1124,7 @@ static int look(Scanner *s) {
         return SWIG_TOKEN_WSTRING;
       } else if (c == '\\') {
         Delitem(s->text, DOH_END);
-        get_escape(s);
+        get_escape(s, 0);
       }
       break;
 
@@ -1107,7 +1138,7 @@ static int look(Scanner *s) {
         return (SWIG_TOKEN_WCHAR);
       } else if (c == '\\') {
         Delitem(s->text, DOH_END);
-        get_escape(s);
+        get_escape(s, s->prefix != SWIG_LITERAL_UTF8);
       }
       break;
 
@@ -1351,7 +1382,7 @@ static int look(Scanner *s) {
         return (SWIG_TOKEN_CHAR);
       } else if (c == '\\') {
         Delitem(s->text, DOH_END);
-        get_escape(s);
+        get_escape(s, 0);
       }
       break;
 
@@ -1943,6 +1974,8 @@ void Scanner_locator(Scanner *s, String *loc) {
         Scanner_set_location(s, locs->filename, locs->line_number);
         cparse_file = locs->filename;
         cparse_line = locs->line_number;
+        /* The scanner now holds a reference to the filename */
+        Delete(locs->filename);
         l = locs->next;
         Free(locs);
         locs = l;
@@ -1950,25 +1983,25 @@ void Scanner_locator(Scanner *s, String *loc) {
       return;
     }
 
-    /* We're going to push a new location */
+    /* We're going to push a new location. Save the scanner's line as the last token's line (cparse_line) can be several lines earlier. */
     l = (Locator *)Malloc(sizeof(Locator));
     l->filename = cparse_file;
-    l->line_number = cparse_line;
+    /* Keep the filename alive as setting the new location below deletes it when the scanner holds the only reference */
+    DohIncref(l->filename);
+    l->line_number = s->line;
     l->next = locs;
     locs = l;
 
     /* Now, parse the new location out of the locator string */
     {
+      String *filename = NewStringEmpty();
       String *fn = NewStringEmpty();
-      /*      Putc(c, fn); */
 
       while ((c = Getc(loc)) != EOF) {
         if ((c == '@') || (c == ','))
           break;
-        Putc(c, fn);
+        Putc(c, filename);
       }
-      cparse_file = Swig_copy_string(Char(fn));
-      Clear(fn);
       cparse_line = 1;
       /* Get the line number */
       while ((c = Getc(loc)) != EOF) {
@@ -1986,7 +2019,10 @@ void Scanner_locator(Scanner *s, String *loc) {
         Putc(c, fn);
       }
       /*  Swig_diagnostic(cparse_file, cparse_line, "Scanner_set_location\n"); */
-      Scanner_set_location(s, cparse_file, cparse_line);
+      Scanner_set_location(s, filename, cparse_line);
+      /* The scanner holds the reference to the filename, as it does when cparse_file is set from Scanner_file() */
+      cparse_file = filename;
+      Delete(filename);
       Delete(fn);
     }
   }
