@@ -177,16 +177,13 @@ int skip_balanced(int startchar, int endchar) {
 /* -----------------------------------------------------------------------------
  * balanced_group_is_open()
  *
- * Whether a group opened by startchar is still waiting to be closed, that is
- * whether skip_balanced() would find its endchar rather than run to the end of
- * input.  Does not change the state of the scanner.
+ * Whether a group is still waiting to be closed by endchar, that is whether
+ * skip_balanced() would find its endchar rather than run to the end of input.
+ * Does not change the state of the scanner.
  * ----------------------------------------------------------------------------- */
 
-int balanced_group_is_open(int startchar, int endchar) {
-  String *code = Scanner_get_raw_text_balanced(scan, startchar, endchar);
-  int is_open = code != 0;
-  Delete(code);
-  return is_open;
+int balanced_group_is_open(int endchar) {
+  return Scanner_has_balanced_end(scan, endchar);
 }
 
 /* -----------------------------------------------------------------------------
@@ -218,32 +215,26 @@ String *get_raw_text_to_semicolon(void) {
  *
  * Skips the rest of an initializer or default argument, up to but not including
  * the ',', ';' or ')' that ends it, and returns its raw text, or NULL after
- * reporting an error if the end of input is reached first.
+ * reporting an error if the end of input is reached first.  If 'after_token' is
+ * set, the rest starts with the token scanned last, which the parser read ahead
+ * and discarded, and the text returned starts with that token's text.
  * ----------------------------------------------------------------------------- */
 
-String *skip_to_initializer_end(void) {
+String *skip_to_initializer_end(int after_token) {
   int start_line = Scanner_line(scan);
+  String *token = after_token ? Copy(Scanner_text(scan)) : 0;
   String *code = Scanner_skip_to_initializer_end(scan);
   if (!code) {
     Swig_error(cparse_file, start_line, "Missing ';' or ')'. Reached end of input.\n");
+    Delete(token);
     return NULL;
+  }
+  if (token) {
+    Insert(code, 0, token);
+    Delete(token);
   }
   cparse_line = Scanner_line(scan);
   cparse_file = Scanner_file(scan);
-  return code;
-}
-
-/* -----------------------------------------------------------------------------
- * get_raw_text_to_initializer_end()
- *
- * Returns the raw text skip_to_initializer_end() would skip without skipping it,
- * or NULL after reporting an error if the end of input is reached first.
- * ----------------------------------------------------------------------------- */
-
-String *get_raw_text_to_initializer_end(void) {
-  String *code = Scanner_get_raw_text_to_initializer_end(scan);
-  if (!code)
-    Swig_error(cparse_file, Scanner_line(scan), "Missing ';' or ')'. Reached end of input.\n");
   return code;
 }
 
@@ -797,29 +788,21 @@ static int yylook(void) {
 
     case SWIG_TOKEN_STRING:
     case SWIG_TOKEN_WSTRING:
-      {
-        String *prefix = Scanner_literal_prefix(scan);
-        yylval.str = NewString(Scanner_text(scan));
-        /* The literal's own text says nothing about which character type it has, so keep the encoding prefix that
-           does with the value, for the parser to read where the character type matters. */
-        if (Len(prefix) > 0)
-          Setmeta(yylval.str, "encodingprefix", NewString(prefix));
-        return scanner_literal_token(tok)->parser_token;
-      }
+      yylval.literal.text = NewString(Scanner_text(scan));
+      /* The decoded text says nothing about which character type the literal has, so its encoding prefix goes with it,
+         for the parser to read where the character type matters. */
+      yylval.literal.prefix = Scanner_literal_prefix(scan);
+      return scanner_literal_token(tok)->parser_token;
 
     case SWIG_TOKEN_CHAR:
     case SWIG_TOKEN_WCHAR:
-      {
-        String *prefix = Scanner_literal_prefix(scan);
-        yylval.str = NewString(Scanner_text(scan));
-        if (Len(yylval.str) == 0) {
-          Swig_error(cparse_file, cparse_line, "Empty character constant\n");
-        }
-        /* Every prefixed character literal is scanned as a wide one, so keep the prefix that says which it is. */
-        if (Len(prefix) > 0)
-          Setmeta(yylval.str, "encodingprefix", NewString(prefix));
-        return scanner_literal_token(tok)->parser_token;
+      yylval.literal.text = NewString(Scanner_text(scan));
+      if (Len(yylval.literal.text) == 0) {
+        Swig_error(cparse_file, cparse_line, "Empty character constant\n");
       }
+      /* Every prefixed character literal is scanned as a wide one, so its encoding prefix says which it is. */
+      yylval.literal.prefix = Scanner_literal_prefix(scan);
+      return scanner_literal_token(tok)->parser_token;
 
       /* Numbers */
 

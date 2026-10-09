@@ -21,6 +21,80 @@ Version 4.6.0 (in progress)
 	    to new library files `complex.i` and `std_complex.i`.
 
 2026-09-26: wsfulton
+            The extra wrappers generated for the default arguments of a member
+            function now keep the function's 'volatile' qualifier and ref-qualifier,
+            as they already kept 'const'.  The extra wrappers of an rvalue
+            ref-qualified member function did not compile, and a %feature naming a
+            'volatile' or ref-qualified member function did not apply to them:
+
+              %feature("ignore", "0") S::rv(int a = 1) &&;
+              %feature("except") S::vol(int a = 1) volatile %{ ... %}
+              struct S {
+                int rv(int a = 1) &&;         // rv() compiles
+                int vol(int a = 1) volatile;  // vol() gets the %feature
+              };
+
+            An rvalue ref-qualified member function that is not unignored, and a
+            member function with an explicit object parameter that is an rvalue
+            reference, are now ignored along with their extra wrappers.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+            A %rename, %ignore or %feature naming one of these extra wrappers now
+            has to include the qualifiers, as it already had to for 'const', for
+            example '%ignore S::vol() volatile;' rather than '%ignore S::vol();'.
+
+2026-09-26: wsfulton
+            An array dimension that is an expression, rather than a number or a
+            name, is now parenthesised where a typemap uses it through $1_dim0,
+            $1_dim1 and so on, or through $1_size, so that the expression keeps
+            its meaning next to the operators the typemap puts round it:
+
+              #define FLAGS 3
+              int flags[FLAGS | 4];  // $1_dim0 is (3|4)
+
+            Setting a global or member array of such a size could loop past its
+            end, and setting a char array of such a size could cut the string
+            short.
+
+2026-09-26: wsfulton
+            An auto variable or decltype of the address of a parenthesised name, or
+            of a parenthesised address, is now deduced as the pointer it is:
+
+              int g;
+              char c;
+              auto p = &(g);              // int *, was ignored
+              auto q = &(c);              // char *, was const char *
+              auto v{&(g)};               // int *, was ignored
+              decltype((&g)) d = &g;      // int *, was left in the wrapper
+              decltype(auto) r = (&g);    // int *, was ignored
+
+2026-09-26: wsfulton
+            An auto variable or decltype of a C-style cast of a string literal to
+            a pointer type is now deduced as the type cast to.  It was deduced as
+            'const char *' whatever the cast, and the wrapper did not compile:
+
+              auto v = (const void *)"abc";                     // const void *
+              decltype(auto) b = (const unsigned char *)"abc";  // const unsigned char *
+
+2026-09-26: wsfulton
+            A decltype of a parenthesised enumerator, and a 'decltype(auto)'
+            variable initialised by one, now name the enumeration, as the
+            unparenthesised enumerator does:
+
+              namespace N { enum class Shade { Light, Dark }; }
+              decltype((N::Shade::Dark)) s = N::Shade::Dark;  // N::Shade, was int
+              decltype(auto) t = (N::Shade::Dark);            // N::Shade, was int
+
+            An enumerator of a scoped enumeration, or in a namespace or a class,
+            was given the type int and the generated wrapper did not compile.
+            An unqualified enumerator was not deduced at all.
+
+2026-09-26: wsfulton
+            [OCaml] The wrapper of a function returning 'const void *', or of a
+            global variable of that type, now compiles.
+
+2026-09-26: wsfulton
             [OCaml, R] Fix the wrapper of a class template instantiated with a
             character literal argument:
 
@@ -31,6 +105,36 @@ Version 4.6.0 (in progress)
 
             The OCaml wrapper of a static member constant did not compile and
             the R wrapper of the class did not load.
+
+2026-09-25: wsfulton
+            An auto variable or decltype of an expression over a pointer is no longer
+            deduced as the type pointed to, which gave a wrapper that did not compile.
+            Pointer arithmetic is now ignored with warning 346, or 344 for decltype,
+            while a C-style cast deduces the type cast to and a dereference the type
+            pointed to, as a reference for decltype:
+
+              int *pg;
+              auto p = pg + 1;            // Warning 346 (ignored), was int
+              auto c = (const int *)pg;   // const int *, was int
+              auto d = *pg;               // int, was ignored
+              auto f() -> decltype(*pg);  // int &, was left in the wrapper
+
+2026-09-25: wsfulton
+            A trailing return type decltype of 'this->member', or of a call to a
+            member function that is not overloaded, is now deduced, and a member
+            function takes precedence over a global function of the same name:
+
+              double mf(int);
+              struct S {
+                int d;
+                int mf();
+                auto a() -> decltype(this->d + 1);  // int
+                auto b() -> decltype(mf());         // int, was double
+              };
+
+            Any other decltype over members or 'this' that cannot be deduced now
+            makes the function ignored with warning 344.  It was previously left in
+            the wrapper, which then did not compile.
 
 2026-09-25: wsfulton
             A trailing return type decltype of an expression over function

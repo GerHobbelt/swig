@@ -190,6 +190,40 @@
   auto shadowed_negate(const short &shadow_x) -> decltype(-shadow_x) {
     return -shadow_x;
   }
+
+  // Members named in a trailing return type are looked up in the class, not outside it where the wrapper is.
+  double shadow_mf(int) { return 0.5; }
+  struct MemberTrailing {
+    int d;
+    int h() const { return 7; }
+    int shadow_mf() const { return 8; }
+    auto via_this() const -> decltype(this->d) { return d; }
+    auto this_sum() const -> decltype(this->d + 1) { return d + 1; }
+    auto call() const -> decltype(h()) { return h(); }
+    auto call_sum() const -> decltype(h() * 2) { return h() * 2; }
+    auto shadowed_call() const -> decltype(shadow_mf()) { return shadow_mf(); }
+    // Ignored with warning 344 as 'this' is not in scope in the wrapper.
+    auto self_ptr() -> decltype(this) { return this; }
+    auto self_deref() const -> decltype(*this) { return *this; }
+  };
+
+  template<class T> struct TemplateTrailing {
+    T v;
+    auto self_ptr() -> decltype(this) { return this; }
+    auto via_this() const -> decltype(this->v) { return v; }
+  };
+%}
+%template(TemplateTrailingInt) TemplateTrailing<int>;
+
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) lvalue_ptr;
+
+%inline %{
+  // A dereference is an lvalue, so these return 'int &'.
+  int lvalue_values[3] = { 4, 5, 6 };
+  int *lvalue_ptr = lvalue_values;
+  auto deref_lvalue() -> decltype(*lvalue_ptr) { return *lvalue_ptr; }
+  auto parameter_deref(int *p) -> decltype(*p) { return *p; }
+  auto deref_sum(int *p) -> decltype(*p + 1) { return *p + 1; }
 %}
 
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_ptr;
@@ -231,4 +265,13 @@
   // A functional cast to a class names the class.
   decltype(Held()) constructed_held = { 7 };
   decltype(Held{8}) braced_held = { 9 };
+
+  // An enumerator is a prvalue, so a parenthesised one names its enumeration as the unparenthesised one does.
+  namespace EnumSpace {
+    enum Hue { hue_red, hue_blue };
+  }
+  decltype((enumerated_b)) paren_enumerator = enumerated_b;                                     // Enumerated
+  decltype((Enumerated::enumerated_b)) paren_qualified_enumerator = enumerated_b;                // Enumerated
+  decltype((ScopedEnumerated::scoped_b)) paren_scoped_enumerator = ScopedEnumerated::scoped_b;   // ScopedEnumerated
+  decltype((EnumSpace::hue_blue)) paren_namespace_enumerator = EnumSpace::hue_blue;              // EnumSpace::Hue
 %}

@@ -78,17 +78,11 @@ static void add_parms(ParmList *p, List *patchlist, List *typelist, int is_patte
 
 static void expand_variadic_parms(Node *n, const char *attribute, Parm *unexpanded_variadic_parm, ParmList *expanded_variadic_parms) {
   Parm *pack;
-  for (pack = unexpanded_variadic_parm; pack; pack = nextSibling(pack)) {
+  for (pack = ParmList_find_variadic_parm(unexpanded_variadic_parm, 0); pack; pack = ParmList_find_variadic_parm(nextSibling(pack), 0)) {
     ParmList *p = Getattr(n, attribute);
     int variadic_pos = 0;
-    Parm *variadic;
-    if (!SwigType_isvariadic(Getattr(pack, "type")))
-      continue;
     /* The parm expanding this pack, not just the first variadic one, which may belong to a member template */
-    for (variadic = p; variadic; variadic = nextSibling(variadic), ++variadic_pos) {
-      if (SwigType_variadic_expands(Getattr(variadic, "type"), Getattr(pack, "name")))
-        break;
-    }
+    Parm *variadic = ParmList_find_pack_expansion(p, Getattr(pack, "name"), &variadic_pos);
     if (!variadic)
       continue;
     if (pack != unexpanded_variadic_parm) {
@@ -865,13 +859,8 @@ static void rebuild_abbreviated_decl(Node *n) {
   for (tp = Getattr(n, "templateparms"); tp && !abbreviated; tp = nextSibling(tp))
     abbreviated = GetFlag(tp, "abbreviated_auto");
   if (abbreviated && parms && SwigType_isfunction(decl)) {
-    SwigType *newdecl = Copy(decl);
-    SwigType *qualifiers = SwigType_pop_function_qualifiers(newdecl);
-    Delete(SwigType_pop(newdecl));
-    SwigType_add_function(newdecl, parms);
-    SwigType_push(newdecl, qualifiers);
+    SwigType *newdecl = SwigType_replace_function_parms(Copy(decl), parms);
     Setattr(n, "decl", newdecl);
-    Delete(qualifiers);
     Delete(newdecl);
   }
 }
@@ -890,15 +879,8 @@ static void rebuild_abbreviated_decl(Node *n) {
  * ----------------------------------------------------------------------------- */
 
 static int explicit_template_argument_count(ParmList *templateparms, ParmList *tparms) {
-  int later_singles = 0;
-  int seen_pack = 0;
-  Parm *p;
-  for (p = templateparms; p; p = nextSibling(p)) {
-    if (SwigType_isvariadic(Getattr(p, "type")))
-      seen_pack = 1;
-    else if (seen_pack)
-      ++later_singles;
-  }
+  Parm *pack = ParmList_find_variadic_parm(templateparms, 0);
+  int later_singles = pack ? ParmList_len_nonvariadic(nextSibling(pack)) : 0;
   return ParmList_len(tparms) - later_singles;
 }
 
@@ -979,14 +961,7 @@ int Swig_cparse_template_expand(Node *n, String *rname, ParmList *tparms, Symtab
        * every later pack empty, so what the first absorbs is whatever the parms taking one argument each do not.
        * Counting those rather than subtracting the length of the list is what makes a second pack come out empty
        * instead of one argument short. */
-      int fixed_parms = 0;
-      int absorbed;
-      Parm *rp;
-      for (rp = templateparmsraw; rp; rp = nextSibling(rp)) {
-        if (!SwigType_isvariadic(Getattr(rp, "type")))
-          ++fixed_parms;
-      }
-      absorbed = ParmList_len(templateparms) - fixed_parms;
+      int absorbed = ParmList_len(templateparms) - ParmList_len_nonvariadic(templateparmsraw);
       Parm *slice = ParmList_nth_parm(templateparms, variadic_pos);
       expanded_variadic_parms = CopyParmListMax(slice, absorbed);
     }
@@ -1855,45 +1830,9 @@ static String *instantiated_function_signature(Node *n, ParmList *instantiated_p
   return sig;
 }
 
-/* -----------------------------------------------------------------------------
- * template_constraints_display_str()
- *
- * Render every constraint attached to function template 'n' - the requires-clause on
- * the template itself and the type-constraint on each template parameter, which is
- * where a C++20 abbreviated 'Concept auto' parameter puts it - as constraint text for
- * a diagnostic.  Constraint_signature_str() is the equivalent for comparing two
- * declarations.
- * ----------------------------------------------------------------------------- */
-
-static String *template_constraints_display_str(Node *n) {
-  String *out = NewStringEmpty();
-  Node *constraint = Getattr(n, "constraint");
-  Parm *tp;
-  if (constraint) {
-    String *s = Constraint_str(constraint);
-    Printf(out, "%s", s);
-    Delete(s);
-  }
-  for (tp = Getattr(n, "templateparms"); tp; tp = nextSibling(tp)) {
-    Node *tconstraint = Getattr(tp, "constraint");
-    if (tconstraint) {
-      String *s = Constraint_str(tconstraint);
-      if (Len(out) > 0)
-        Append(out, " && ");
-      Printf(out, "%s", s);
-      Delete(s);
-    }
-  }
-  if (Len(out) == 0)
-    Append(out, "no constraint");
-  return out;
-}
-
 /* The return type function template 'n' instantiates to with 'instantiated_parms'. */
 static SwigType *instantiated_return_type(Node *n, ParmList *instantiated_parms) {
-  SwigType *type = Copy(Getattr(n, "type"));
-  SwigType_push(type, Getattr(n, "decl"));
-  Delete(SwigType_pop_function(type));
+  SwigType *type = Swig_function_return_type(n);
   replace_template_parms(type, n, instantiated_parms);
   return type;
 }
@@ -1935,21 +1874,19 @@ static int check_constrained_overloads(List *matches, String *name, ParmList *in
     Node *ni = Getitem(matches, i);
     String *sigi = instantiated_function_signature(ni, instantiated_parms, 1);
     String *writteni = instantiated_function_signature(ni, instantiated_parms, 0);
-    String *coni = Constraint_signature_str(ni);
     for (j = i + 1; j < len && !reported; j++) {
       Node *nj = Getitem(matches, j);
       String *sigj = instantiated_function_signature(nj, instantiated_parms, 1);
       String *writtenj = instantiated_function_signature(nj, instantiated_parms, 0);
-      String *conj = Constraint_signature_str(nj);
-      int constraints_differ = !Equal(coni, conj);
+      int constraints_differ = !Constraint_signatures_equal(ni, nj);
       if (Equal(sigi, sigj) && (constraints_differ || (!Equal(writteni, writtenj) && !same_instantiated_return_type(ni, nj, instantiated_parms)))) {
         String *tname = Copy(name);
         String *namestr;
         SwigType_add_template(tname, instantiated_parms);
         namestr = SwigType_namestr(tname);
         if (constraints_differ) {
-          String *displayi = template_constraints_display_str(ni);
-          String *displayj = template_constraints_display_str(nj);
+          String *displayi = Constraint_display_str(ni);
+          String *displayj = Constraint_display_str(nj);
           Swig_error(cparse_file,
                      cparse_line,
                      "Ambiguous template instantiation of '%s'. Overloaded declarations of '%s' with '%s' and '%s' instantiate to the same "
@@ -1974,11 +1911,9 @@ static int check_constrained_overloads(List *matches, String *name, ParmList *in
       }
       Delete(sigj);
       Delete(writtenj);
-      Delete(conj);
     }
     Delete(sigi);
     Delete(writteni);
-    Delete(coni);
   }
   return reported;
 }
@@ -2000,17 +1935,12 @@ static int check_constrained_overloads(List *matches, String *name, ParmList *in
  * ----------------------------------------------------------------------------- */
 
 static int already_matched(List *matches, Node *n) {
-  String *decl = Getattr(n, "decl");
-  String *constraints = Constraint_signature_str(n);
-  int matched = 0;
   Iterator mi;
-  for (mi = First(matches); mi.item && !matched; mi = Next(mi)) {
-    String *mconstraints = Constraint_signature_str(mi.item);
-    matched = Equal(decl, Getattr(mi.item, "decl")) && Equal(constraints, mconstraints);
-    Delete(mconstraints);
+  for (mi = First(matches); mi.item; mi = Next(mi)) {
+    if (Equal(Getattr(n, "decl"), Getattr(mi.item, "decl")) && Constraint_signatures_equal(n, mi.item))
+      return 1;
   }
-  Delete(constraints);
-  return matched;
+  return 0;
 }
 
 static void collect_function_template_matches(Node *firstn, String *name, ParmList *instantiated_parms, int variadic, int ignored, List *matches) {

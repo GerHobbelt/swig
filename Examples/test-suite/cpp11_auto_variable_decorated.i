@@ -27,11 +27,17 @@
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) carray_decay;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) cptr_from_cint;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) static_var_ptr;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_ptr;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_paren_ptr;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_static_var_ptr;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_ptr_decltype;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_address_decltype;
 
 #if defined(SWIGC)
 // TODO: Fix the experimental C backend emitting 'int (*)(int)*' for a function pointer.
 %ignore call_fn;
 %ignore fn_ptr;
+%ignore paren_fn_ptr;
 // TODO: Fix the experimental C backend emitting 'int [4]*' for an array variable and 'int (*)[4]*'
 // for a pointer to an array.
 %ignore array_ref;
@@ -62,6 +68,9 @@ int deref(int *p) { return *p; }
 int deref2(int **p) { return **p; }
 int call_fn(int (*fn)(int), int x) { return fn(x); }
 int array_first(int (*p)[4]) { return (*p)[0]; }
+const char *string_deref(const char *const *p) { return *p; }
+int first_byte(const unsigned char *p) { return p[0]; }
+int first_char(const void *p) { return *static_cast<const char *>(p); }
 
 // auto& - lvalue reference to the deduced type.
 auto& ref_var = global_int;
@@ -160,10 +169,27 @@ decltype(&Pt::a) member_ptr_decltype = &Pt::a;   // int Pt::*
 auto static_fn_ptr = &Pt::sm;                    // int (*)()
 auto static_var_ptr = &Pt::sv;                   // int *
 
+// Parentheses around the operand of '&', or around the whole address, leave it the address of what is named.
+char global_char = 'c';
+auto paren_ptr = &(global_int);                                  // int *
+auto paren_paren_ptr = &((global_int));                          // int *
+auto paren_char_ptr = &(global_char);                            // char *
+auto paren_fn_ptr = &(global_fn);                                // int (*)(int)
+auto paren_static_var_ptr = &(Pt::sv);                           // int *
+decltype(&(global_int)) paren_ptr_decltype = &global_int;        // int *
+decltype((&global_int)) paren_address_decltype = &global_int;    // int *
+
 // A reference binds to the array of characters a string literal is, not to the pointer it decays to.
 auto& ref_string = "text";              // const char (&)[5]
 auto&& fwd_string = "text";             // const char (&)[5]
 const auto& cref_string = "text";       // const char (&)[5]
 auto const& cref_post_string = "te" "xt";  // const char (&)[5]
 auto& ref_string_wide = L"text";        // const wchar_t (&)[5]
+
+// A cast of a string literal is a pointer, so the reference binds to that pointer rather than to an array.
+const auto& cref_string_cast = (const char *)"text";  // const char *const &
+
+// A cast of a string literal to any other pointer type is that type too.
+const auto *const bytes_cast = (const unsigned char *)"text";  // const unsigned char *const
+auto *const void_cast = (const void *)"text";                  // const void *const
 %}

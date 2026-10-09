@@ -25,12 +25,15 @@
 %warnfilter(SWIGWARN_CPP11_AUTO) var_string_raw_char16;
 %warnfilter(SWIGWARN_CPP11_AUTO) var_string_raw_char32;
 
-// An operator applied to a string literal makes an expression, and this one has type 'const char *'.
+// An operator applied to a string literal, or a cast of one, makes an expression of type 'const char *'.
 %warnfilter(SWIGWARN_TYPEMAP_CHARLEAK) var_string_expr;
+%warnfilter(SWIGWARN_TYPEMAP_CHARLEAK) var_string_cast;
 
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) paren_ptr;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) var_paren_ptr;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) var_paren_class;
+%warnfilter(SWIGWARN_CPP11_AUTO) var_paren_function;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) var_paren_address;
 
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) var_new;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) var_new_klass;
@@ -69,6 +72,9 @@ decltype(auto) var_string_parens = ("text");
 bool use_ext = true;
 decltype(auto) var_string_expr = use_ext ? "ext" : "none";
 
+// A cast of a literal is a prvalue of the type cast to, so this is a 'const char *' rather than a reference to an array.
+decltype(auto) var_string_cast = (const char *)"text";
+
 // A parenthesised name is an lvalue, so each of these deduces what 'decltype((name))' names, a reference to it.
 struct Paren {
   int member;
@@ -87,6 +93,21 @@ decltype(auto) var_paren_ptr = (paren_ptr);        // int *&
 decltype(auto) var_paren_class = (paren_class);    // Paren &
 decltype(auto) var_paren_array = (paren_array);    // int (&)[2]
 decltype(auto) var_paren_static = (Paren::count);  // int &
+
+// A parenthesised enumerator deduces its enumeration, and a parenthesised function name deduces nothing, as for decltype.
+namespace ParenSpace {
+  enum ParenShade { paren_light, paren_dark };
+}
+int paren_function() { return 6; }
+decltype(auto) var_paren_enumerator = (ParenSpace::paren_dark);  // ParenSpace::ParenShade
+// MSVC rejects a parenthesised function name here (error C3556), and SWIG ignores the variable, so MSVC does not see it.
+#if defined(SWIG) || !defined(_MSC_VER)
+decltype(auto) var_paren_function = (paren_function);            // int (&)(), not deduced
+#endif
+
+// A parenthesised address is not a name, so this is the pointer and not a reference to one.
+decltype(auto) var_paren_address = (&paren_int);  // int *
+int paren_address_value(int *p) { return *p; }
 
 // Return types, all ignored as the type would have to come from the body.
 decltype(auto) ret_plain() { return global_int; }
@@ -125,3 +146,14 @@ int new_klass_value(Klass *k) { return k->v; }
 // A lambda is wrapped as an opaque object whatever its return type is spelt as.
 auto lambda_dauto = [](int x) -> decltype(auto) { return x; };
 %}
+
+#if !defined(SWIGOCAML)
+// TODO: OCaml emits enum class enumerators unqualified
+%inline %{
+// A parenthesised enumerator of a scoped enumeration deduces its enumeration too.
+namespace ParenSpace {
+  enum class ParenScoped { scoped_light, scoped_dark };
+}
+decltype(auto) var_paren_scoped = (ParenSpace::ParenScoped::scoped_dark);  // ParenSpace::ParenScoped
+%}
+#endif

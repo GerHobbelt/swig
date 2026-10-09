@@ -39,6 +39,26 @@ swig_check(cpp11_decltype.shadowed_sum(7, 8), 15)
 swig_assert(isinstance(cpp11_decltype.shadowed_sum(7, 8), int), "shadowed_sum should return an int")
 swig_check(cpp11_decltype.shadowed_negate(4), -4)
 
+m = cpp11_decltype.MemberTrailing()
+m.d = 3
+swig_check(m.via_this(), 3)
+swig_check(m.this_sum(), 4)
+swig_check(m.call(), 7)
+swig_check(m.call_sum(), 14)
+swig_assert(not hasattr(m, "self_ptr"), "self_ptr should be ignored")
+swig_assert(not hasattr(m, "self_deref"), "self_deref should be ignored")
+t = cpp11_decltype.TemplateTrailingInt()
+t.v = 5
+swig_check(t.via_this(), 5)
+swig_assert(not hasattr(t, "self_ptr"), "TemplateTrailingInt.self_ptr should be ignored")
+# The member function returning an int, not the global one returning a double.
+swig_check(m.shadowed_call(), 8)
+swig_assert(isinstance(m.shadowed_call(), int), "shadowed_call should return an int")
+
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.deref_lvalue()), 4)
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.parameter_deref(cpp11_decltype.three_values())), 11)
+swig_check(cpp11_decltype.deref_sum(cpp11_decltype.three_values()), 12)
+
 # decltype(&i) deduces 'int *', so the address is returned rather than the function being ignored.
 if b.get_number_address(None) is None:
     raise RuntimeError("b.get_number_address should return a pointer")
@@ -123,3 +143,11 @@ if cpp11_decltype.cvar.typedef_enum_lvalue != cpp11_decltype.typedefed_a:
 
 swig_check(cpp11_decltype.cvar.constructed_held.member, 7)
 swig_check(cpp11_decltype.cvar.braced_held.member, 9)
+
+# A parenthesised enumerator has the type of its enumeration.
+swig_check(cpp11_decltype.cvar.paren_enumerator, cpp11_decltype.enumerated_b)
+swig_check(cpp11_decltype.cvar.paren_qualified_enumerator, cpp11_decltype.enumerated_b)
+swig_check(cpp11_decltype.cvar.paren_scoped_enumerator, cpp11_decltype.ScopedEnumerated_scoped_b)
+cpp11_decltype.cvar.paren_scoped_enumerator = cpp11_decltype.ScopedEnumerated_scoped_a
+swig_check(cpp11_decltype.cvar.paren_scoped_enumerator, cpp11_decltype.ScopedEnumerated_scoped_a)
+swig_check(cpp11_decltype.cvar.paren_namespace_enumerator, cpp11_decltype.hue_blue)

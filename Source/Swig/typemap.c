@@ -624,14 +624,9 @@ void Swig_typemap_clear_apply(Parm *parms) {
 /* The type the array dimensions come from, which is the array a pointer or reference is to.  A type
    with no array behind it is returned as it is, so the result is only an array when the type has one. */
 static SwigType *array_dimensions_type(SwigType *type) {
-  if (SwigType_ispointer(type) || SwigType_isreference(type) || SwigType_isrvalue_reference(type)) {
-    SwigType *t = Copy(type);
-    Delete(SwigType_pop(t));
-    if (SwigType_isarray(t))
-      return t;
-    Delete(t);
-  }
-  return Copy(type);
+  SwigType *t = Copy(type);
+  Delete(SwigType_pop_to_array(t));
+  return t;
 }
 
 /* Whether a type is an array, or a pointer or reference to one. */
@@ -642,15 +637,32 @@ static int has_array_dimensions(SwigType *type) {
   return isarray;
 }
 
+/* Array dimension n of an array type, as substituted for $1_dimN and multiplied into $1_size.  It is parenthesised
+   unless it is a number, a name or parenthesised already, so that a dimension such as 'LEN << 1' keeps its meaning
+   inside the expression a typemap uses it in. */
+static String *array_dimension_operand(SwigType *type, int n) {
+  String *dim = SwigType_array_getdim(type, n);
+  String *trimmed = Swig_cparse_trim_parenthesis(dim);
+  const char *c = Char(dim);
+  while (*c && (isalnum((int)*c) || *c == '_' || *c == ':'))
+    c++;
+  if (*c && !trimmed) {
+    String *operand = NewStringf("(%s)", dim);
+    Delete(dim);
+    dim = operand;
+  }
+  Delete(trimmed);
+  return dim;
+}
+
 /* Replace every array dimension with ANY, including behind a pointer or a reference. */
 static SwigType *strip_arrays(SwigType *type) {
   SwigType *t;
-  SwigType *prefix = 0;
+  SwigType *prefix;
   int ndim;
   int i;
   t = Copy(type);
-  if (SwigType_ispointer(t) || SwigType_isreference(t) || SwigType_isrvalue_reference(t))
-    prefix = SwigType_pop(t);
+  prefix = SwigType_pop_to_array(t);
   ndim = SwigType_array_ndim(t);
   for (i = 0; i < ndim; i++) {
     SwigType_array_setdim(t, i, "ANY");
@@ -998,7 +1010,7 @@ static int typemap_replace_vars(String *s, ParmList *locals, SwigType *type, Swi
     ndim = SwigType_array_ndim(adims);
     size = NewStringEmpty();
     for (i = 0; i < ndim; i++) {
-      String *dim = SwigType_array_getdim(adims, i);
+      String *dim = array_dimension_operand(adims, i);
       if (index == 1) {
         char t[32];
         snprintf(t, sizeof(t), "$dim%d", i);

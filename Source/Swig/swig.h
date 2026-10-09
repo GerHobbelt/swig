@@ -119,6 +119,7 @@ extern SwigType *SwigType_del_pointer(SwigType *t);
 extern SwigType *SwigType_add_array(SwigType *t, const_String_or_char_ptr size);
 extern SwigType *SwigType_del_array(SwigType *t);
 extern SwigType *SwigType_pop_arrays(SwigType *t);
+extern SwigType *SwigType_pop_to_array(SwigType *t);
 extern SwigType *SwigType_add_reference(SwigType *t);
 extern SwigType *SwigType_del_reference(SwigType *t);
 extern SwigType *SwigType_add_rvalue_reference(SwigType *t);
@@ -136,6 +137,7 @@ extern SwigType *SwigType_add_function(SwigType *t, ParmList *parms);
 extern SwigType *SwigType_add_template(SwigType *t, ParmList *parms);
 extern SwigType *SwigType_pop_function(SwigType *t);
 extern SwigType *SwigType_pop_function_qualifiers(SwigType *t);
+extern SwigType *SwigType_replace_function_parms(SwigType *t, ParmList *parms);
 extern SwigType *SwigType_function_parms_only(ParmList *parms);
 extern ParmList *SwigType_function_parms(const SwigType *t, Node *file_line_node);
 extern List *SwigType_split(const SwigType *t);
@@ -381,6 +383,8 @@ extern String *Swig_stringify_with_location(DOH *object);
 extern void Swig_cresult_name_set(const char *new_name);
 extern const char *Swig_cresult_name(void);
 extern String *Swig_cparm_name(Parm *p, int i);
+extern SwigType *Swig_full_type(Node *n);
+extern SwigType *Swig_function_return_type(Node *n);
 extern String *Swig_wrapped_var_type(SwigType *t, int varcref);
 extern int Swig_cargs(Wrapper *w, ParmList *l);
 extern String *Swig_cresult(SwigType *t, const_String_or_char_ptr name, const_String_or_char_ptr decl);
@@ -465,7 +469,9 @@ extern Node *Constraint_combine(const_String_or_char_ptr op, Node *lhs, Node *rh
 extern String *Constraint_str(Node *n);
 extern String *Constraint_signature_str(Node *n);
 extern int Constraint_signatures_equal(Node *a, Node *b);
+extern int Constraint_has_any(Node *n);
 extern int Constraint_differently_constrained(Node *a, Node *b);
+extern String *Constraint_display_str(Node *n);
 extern String *Constraint_match_str(Node *constraint, ParmList *templateparms);
 
 /* hacks defined in C++ ! */

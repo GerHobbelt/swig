@@ -24,7 +24,7 @@ extern int cparse_start_line;
 
 struct Scanner {
   String *text;   /* Current token value */
-  String *prefix; /* Encoding prefix of the string or character literal just scanned, empty when it had none */
+  int prefix;     /* Encoding prefix of the string or character literal just scanned, a SWIG_LITERAL_* value */
   List *scanobjs; /* Objects being scanned */
   String *str;    /* Current object being scanned */
   char *idstart;  /* Optional identifier start characters */
@@ -64,7 +64,7 @@ Scanner *NewScanner(void) {
   s->idstart = NULL;
   s->scanobjs = NewList();
   s->text = NewStringEmpty();
-  s->prefix = NewStringEmpty();
+  s->prefix = SWIG_LITERAL_ORDINARY;
   s->str = 0;
   s->error = 0;
   s->error_line = 0;
@@ -85,7 +85,6 @@ void DelScanner(Scanner *s) {
   Delete(s->scanobjs);
   Delete(s->brackets);
   Delete(s->text);
-  Delete(s->prefix);
   Delete(s->error);
   Delete(s->str);
   Free(s->idstart);
@@ -511,12 +510,24 @@ static void get_escape(Scanner *s) {
   return;
 }
 
-/* Record the encoding prefix of the string or character literal whose opening quote has just been read, which is
-   whatever of the token text comes before that quote: empty for "text", L for L"text", u8R for u8R"(text)". */
+/* Classify the encoding prefix of the string or character literal whose opening quote has just been read, which is
+   whatever of the token text comes before that quote: none for "text", L for L"text", u8 and raw for u8R"(text)". */
 static void save_literal_prefix(Scanner *s) {
-  Clear(s->prefix);
-  Append(s->prefix, s->text);
-  Delitem(s->prefix, DOH_END);
+  const char *text = Char(s->text);
+  int len = Len(s->text);
+
+  if (strstr(text, "u8"))
+    s->prefix = SWIG_LITERAL_UTF8;
+  else if (strchr(text, 'u'))
+    s->prefix = SWIG_LITERAL_UTF16;
+  else if (strchr(text, 'U'))
+    s->prefix = SWIG_LITERAL_UTF32;
+  else if (strchr(text, 'L'))
+    s->prefix = SWIG_LITERAL_WIDE;
+  else
+    s->prefix = SWIG_LITERAL_ORDINARY;
+  if (len >= 2 && text[len - 2] == 'R')
+    s->prefix |= SWIG_LITERAL_RAW;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1524,10 +1535,10 @@ String *Scanner_text(Scanner *s) {
 /* -----------------------------------------------------------------------------
  * Scanner_literal_prefix()
  *
- * Return the encoding prefix of the string or character literal last returned.
+ * Return the encoding prefix of the string or character literal last returned, a SWIG_LITERAL_* value.
  * ----------------------------------------------------------------------------- */
 
-String *Scanner_literal_prefix(Scanner *s) {
+int Scanner_literal_prefix(Scanner *s) {
   return s->prefix;
 }
 
@@ -1661,18 +1672,17 @@ static void lookahead_end(Scanner *s, Scanner *lookahead, long start) {
 }
 
 /* -----------------------------------------------------------------------------
- * Scanner_get_raw_text_balanced()
+ * balanced_end()
  *
- * Returns the raw text between 2 brackets, such as '{...}' or '(...)', including the brackets themselves, or NULL if
- * the closing bracket is missing.  The state of 's' is not changed in either case, as the lookahead runs on a private
- * scanner, see lookahead_begin().
+ * Looks ahead in the text of 's' for the 'endchar' closing a group whose opening bracket has just been scanned.
+ * Returns the position just after it, or -1 if the end of the text is reached first, and stores the position the
+ * lookahead started from in 'start'.  The state of 's' is not changed, as the lookahead runs on a private scanner, see
+ * lookahead_begin().
  * ----------------------------------------------------------------------------- */
 
-String *Scanner_get_raw_text_balanced(Scanner *s, int startchar, int endchar) {
-  String *result = NULL;
+static long balanced_end(Scanner *s, int endchar, long *start) {
+  long end = -1;
   Scanner *lookahead;
-  long start;
-  int old_line = s->line;
 
   int num_levels = 1;
   int starttok = 0;
@@ -1697,9 +1707,9 @@ String *Scanner_get_raw_text_balanced(Scanner *s, int startchar, int endchar) {
   default:
     assert(0);
   }
-  lookahead = lookahead_begin(s, &start);
+  lookahead = lookahead_begin(s, start);
   if (!lookahead)
-    return NULL;
+    return -1;
 
   while (1) {
     int tok = Scanner_token(lookahead);
@@ -1707,11 +1717,7 @@ String *Scanner_get_raw_text_balanced(Scanner *s, int startchar, int endchar) {
       num_levels++;
     } else if (tok == endtok) {
       if (--num_levels == 0) {
-        result = NewStringEmpty();
-        Putc(startchar, result);
-        Write(result, Char(s->str) + start, (int)(Tell(s->str) - start));
-        Setfile(result, Getfile(s->str));
-        Setline(result, old_line);
+        end = Tell(s->str);
         break;
       }
     } else if (tok == SWIG_TOKEN_COMMENT) {
@@ -1726,9 +1732,43 @@ String *Scanner_get_raw_text_balanced(Scanner *s, int startchar, int endchar) {
     }
   }
 
-  lookahead_end(s, lookahead, start);
+  lookahead_end(s, lookahead, *start);
 
+  return end;
+}
+
+/* -----------------------------------------------------------------------------
+ * Scanner_get_raw_text_balanced()
+ *
+ * Returns the raw text between 2 brackets, such as '{...}' or '(...)', including the brackets themselves, or NULL if
+ * the closing bracket is missing.  The state of 's' is not changed in either case, see balanced_end().
+ * ----------------------------------------------------------------------------- */
+
+String *Scanner_get_raw_text_balanced(Scanner *s, int startchar, int endchar) {
+  String *result = NULL;
+  long start;
+  int old_line = s->line;
+  long end = balanced_end(s, endchar, &start);
+
+  if (end >= 0) {
+    result = NewStringEmpty();
+    Putc(startchar, result);
+    Write(result, Char(s->str) + start, (int)(end - start));
+    Setfile(result, Getfile(s->str));
+    Setline(result, old_line);
+  }
   return result;
+}
+
+/* -----------------------------------------------------------------------------
+ * Scanner_has_balanced_end()
+ *
+ * Returns 1 if the closing bracket Scanner_get_raw_text_balanced() looks for is there, else 0, without the text.
+ * ----------------------------------------------------------------------------- */
+
+int Scanner_has_balanced_end(Scanner *s, int endchar) {
+  long start;
+  return balanced_end(s, endchar, &start) >= 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1772,20 +1812,18 @@ String *Scanner_get_raw_text_to_semicolon(Scanner *s) {
 }
 
 /* -----------------------------------------------------------------------------
- * skip_to_initializer_end()
+ * Scanner_skip_to_initializer_end()
  *
  * Skips the rest of an initializer or default argument, up to but not including the ',' or ';' that ends it or the
  * ')' that closes the parameter list, and returns the raw text skipped.  One nested inside '(...)', '[...]' or '{...}'
- * does not count, and nor does a ',' between the '<' and '>' of a template argument list.  The '<' and '>' are only
- * counted outside the other brackets, where they cannot be comparison operators within the type of a new-expression,
- * which is what this is for.  Each comment is replaced by a space in the text returned.  If 'locators' is set, a
- * locator comment the preprocessor put round a macro expansion is passed to Scanner_locator(), as it is when the text
- * is parsed, so that line numbering resumes after the macro.  A lookahead must not do that, as the scanner reading the
- * text for real sees the locators again.  The token that ends the text is pushed back so that it is the next token.
+ * does not count, and nor does a ',' between a '<' and a '>' outside those brackets, which are taken to enclose a
+ * template argument list.  Each comment is replaced by a space in the text returned, and a locator comment the
+ * preprocessor put round a macro expansion is passed to Scanner_locator(), as it is when the text is parsed, so that
+ * line numbering resumes after the macro.  The token that ends the text is pushed back so that it is the next token.
  * Returns NULL if the end of the text is reached first.
  * ----------------------------------------------------------------------------- */
 
-static String *skip_to_initializer_end(Scanner *s, int locators) {
+String *Scanner_skip_to_initializer_end(Scanner *s) {
   String *result;
   long position; /* the start of the text not yet copied to 'result' */
   int num_levels = 0;
@@ -1811,7 +1849,7 @@ static String *skip_to_initializer_end(Scanner *s, int locators) {
       Write(result, Char(s->str) + position, (int)(previous_end - position));
       Putc(' ', result);
       position = Tell(s->str);
-      if (locators && strncmp(loc, "/*@SWIG", 7) == 0 && loc[Len(text) - 3] == '@')
+      if (strncmp(loc, "/*@SWIG", 7) == 0 && loc[Len(text) - 3] == '@')
         Scanner_locator(s, text);
     } else if (tok == SWIG_TOKEN_RPAREN && num_levels == 0) {
       break;
@@ -1835,35 +1873,6 @@ static String *skip_to_initializer_end(Scanner *s, int locators) {
   Setfile(result, Getfile(s->str));
   Setline(result, s->line);
   Scanner_pushtoken(s, tok, Scanner_text(s));
-  return result;
-}
-
-/* -----------------------------------------------------------------------------
- * Scanner_skip_to_initializer_end()
- *
- * Skips the rest of an initializer or default argument, acting on locator comments, see skip_to_initializer_end().
- * ----------------------------------------------------------------------------- */
-
-String *Scanner_skip_to_initializer_end(Scanner *s) {
-  return skip_to_initializer_end(s, 1);
-}
-
-/* -----------------------------------------------------------------------------
- * Scanner_get_raw_text_to_initializer_end()
- *
- * Returns the raw text Scanner_skip_to_initializer_end() would skip, without changing the state of the scanner, or
- * NULL if the end of the text is reached first.  It runs on a private scanner, see lookahead_begin().
- * ----------------------------------------------------------------------------- */
-
-String *Scanner_get_raw_text_to_initializer_end(Scanner *s) {
-  String *result;
-  long start;
-  Scanner *lookahead = lookahead_begin(s, &start);
-
-  if (!lookahead)
-    return NULL;
-  result = skip_to_initializer_end(lookahead, 0);
-  lookahead_end(s, lookahead, start);
   return result;
 }
 

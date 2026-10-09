@@ -25,6 +25,14 @@ public class cpp14_decltype_auto_runme {
     if (cpp14_decltype_auto.paren_deref(cpp14_decltype_auto.getVar_paren_ptr()) != 10)
       throw new RuntimeException("var_paren_ptr should refer to paren_ptr");
 
+    // A parenthesised address is the pointer itself.
+    if (cpp14_decltype_auto.paren_address_value(cpp14_decltype_auto.getVar_paren_address()) != 10)
+      throw new RuntimeException("var_paren_address should point to paren_int");
+
+    // A parenthesised enumerator deduces its enumeration.
+    if (cpp14_decltype_auto.getVar_paren_scoped() != ParenScoped.scoped_dark)
+      throw new RuntimeException("var_paren_scoped");
+
     // Unlike 'auto', 'decltype(auto)' keeps the reference, so var_ref is wrapped as 'int &' and
     // reaches Java as a pointer type where var_int gives a plain int.
     if (cpp14_decltype_auto.getVar_ref() == null)
@@ -50,6 +58,13 @@ public class cpp14_decltype_auto_runme {
       throw new RuntimeException("var_string_parens");
     if (cpp14_decltype_auto.getVar_string_wide() == null)
       throw new RuntimeException("var_string_wide");
+
+    // A cast of a string literal is not a literal, so this 'const char *' can be set to a longer string.
+    if (!cpp14_decltype_auto.getVar_string_cast().equals("text"))
+      throw new RuntimeException("var_string_cast");
+    cpp14_decltype_auto.setVar_string_cast("longer text");
+    if (!cpp14_decltype_auto.getVar_string_cast().equals("longer text"))
+      throw new RuntimeException("var_string_cast should be settable");
 
     // A u8, u or U literal is of a character type SWIG has no type for, so it is ignored.
     try {

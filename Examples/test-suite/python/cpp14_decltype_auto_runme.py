@@ -23,6 +23,12 @@ swig_check(cvar.paren_class.member, 12)
 swig_assert(cvar.var_paren_array is not None, "var_paren_array")
 cvar.var_paren_static = 13
 swig_check(cvar.Paren_count, 13)
+swig_check(cvar.var_paren_enumerator, paren_dark)
+swig_check(cvar.var_paren_scoped, ParenScoped_scoped_dark)
+swig_check(hasattr(cvar, "var_paren_function"), False)
+
+# A parenthesised address is the pointer itself.
+swig_check(paren_address_value(cvar.var_paren_address), 11)
 
 # A deduced return type cannot be deduced from the body, so these are all ignored.
 for ignored in ("ret_plain", "ret_trailing"):
@@ -48,6 +54,11 @@ for ignored in ("var_string_utf8", "var_string_char16", "var_string_char32",
 
 # An expression with a literal as an operand is not a literal, so this is a plain 'const char *'.
 swig_check(cvar.var_string_expr, "ext")
+
+# Nor is a cast of a literal, so this 'const char *' can be set to a longer string, unlike a reference to the array.
+swig_check(cvar.var_string_cast, "text")
+cvar.var_string_cast = "longer text"
+swig_check(cvar.var_string_cast, "longer text")
 
 k = Klass(11)
 swig_check(k.plain(), 11)
