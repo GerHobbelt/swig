@@ -139,6 +139,70 @@ static auto typedef_alias = int_alias_value;  // IntAlias
 static int int_ptr_second(const int *p) { return p[1]; }
 %}
 
+// A subscript deduces the element type, and the return type of the one operator[] a class declares.
+
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) subscript_pointer;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) matrix_row;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) element_ref;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) forwarded_element;
+%ignore AutoIndexed::operator[];
+
+%inline %{
+struct AutoIndexed {
+  double values[2];
+  double operator[](int i) const { return values[i]; }
+};
+static AutoIndexed auto_indexed = {{1.5, 2.5}};
+static int subscript_array[3] = {30, 31, 32};
+static int *subscript_pointer = subscript_array;
+static int subscript_matrix[2][3] = {{40, 41, 42}, {43, 44, 45}};
+static auto array_element = subscript_array[1];                     // int
+static auto pointer_element = subscript_pointer[2];                 // int
+static auto matrix_row = subscript_matrix[1];                       // int *
+static auto matrix_element = subscript_matrix[1][2];                // int
+static auto typedef_array_element = int_array3[2];                  // int
+static auto paren_element = (subscript_pointer)[0];                 // int
+static auto literal_element = "abc"[1];                             // char
+static auto indexed_element = auto_indexed[1];                      // double
+static auto &element_ref = subscript_array[0];                      // int &
+static auto &&forwarded_element = subscript_array[2];               // int &
+static void set_subscript_array_value(int i, int v) { subscript_array[i] = v; }
+static int matrix_default(int v = subscript_matrix[0][1]) { return v; }
+%}
+
+// auto drops a reference that a typedef hides, as the 'reference' member typedef of a container does.
+
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) int_ref;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) typedef_ref_address;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) typedef_ref_forwarded;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) ref_indexed_ref;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) typedef_ref_paren_class;
+%ignore RefIndexed::operator[];
+
+%inline %{
+template<class T> struct RefIndexed {
+  typedef T &reference;
+  T values[2];
+  reference operator[](int i) { return values[i]; }
+};
+typedef int &IntRef;
+%}
+%template(RefIndexedInt) RefIndexed<int>;
+%inline %{
+static RefIndexed<int> ref_indexed = {{70, 71}};
+static IntRef int_ref = ref_indexed.values[0];
+static auto typedef_ref_element = ref_indexed[1];      // int
+static auto *typedef_ref_address = &ref_indexed[0];    // int *
+static auto &&typedef_ref_forwarded = ref_indexed[1];  // int &
+static auto typedef_ref_copy = int_ref;                // int
+
+// decltype of a parenthesised name keeps the one reference a typedef hides.
+typedef RefIndexed<int> &RefIndexedRef;
+static RefIndexedRef ref_indexed_ref = ref_indexed;
+static decltype((int_ref)) typedef_ref_paren = int_ref;                        // int &
+static decltype((ref_indexed_ref)) typedef_ref_paren_class = ref_indexed_ref;  // RefIndexed<int> &
+%}
+
 %inline %{
 // Concatenation of a literal with an encoding prefix and one without
 // was added in C++11.

@@ -62,6 +62,16 @@ swig_check(widget_value(v.auto_widget), 7)
 swig_check(const_int_value(v.const_auto_difference), 2)
 swig_check(auto_default(), 7)
 
+swig_check(int_value(v.subscript_int), 41)
+swig_check(int_value(v.nested_subscript_int), 82)
+swig_check(int_value(v.braced_subscript_int), 42)
+swig_check(int_value(v.subscript_auto), 40)
+swig_check(int_value(v.lambda_int), 42)
+swig_check(int_value(v.nested_lambda_int), 43)
+swig_check(int_value(v.braced_lambda_int), 44)
+swig_check(subscript_default(), 41)
+swig_check(lambda_default(), 43)
+
 swig_check(widget_value(v.decorated_widget), 18)
 swig_check(const_int_value(v.decorated_const_int), 18)
 swig_check(int_value(v.first_int), 19)
@@ -72,7 +82,7 @@ swig_check(int_value(v.number_pointer), 22)
 swig_check(widget_value(v.nested_widget), 20)
 swig_check(widget_value(v.macro_widget), 12)
 
-for name in ["plus_after_initialiser", "plus_after_array", "parenthesised_type_id"]:
+for name in ["plus_after_initialiser", "plus_after_array", "parenthesised_type_id", "lambda_auto"]:
     swig_assert(not hasattr(v, name), name + " should be ignored")
 
 swig_check(v.after_all, 99)

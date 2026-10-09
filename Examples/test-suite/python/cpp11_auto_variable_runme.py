@@ -38,6 +38,33 @@ swig_check(int_ptr_second(cvar.typedef_array), 6)
 swig_check(int_ptr_second(cvar.typedef_array_ptr), 6)
 swig_check(cvar.typedef_alias, 8)
 
+# A subscript deduces the element type.
+swig_check(cvar.array_element, 31)
+swig_check(cvar.pointer_element, 32)
+swig_check(int_ptr_second(cvar.matrix_row), 44)
+swig_check(cvar.matrix_element, 45)
+swig_check(cvar.typedef_array_element, 7)
+swig_check(cvar.paren_element, 30)
+swig_check(cvar.literal_element, "b")
+swig_check(cvar.indexed_element, 2.5)
+swig_assert(isinstance(cvar.indexed_element, float), "indexed_element should be a float")
+swig_check(matrix_default(), 41)
+# The 'int &' variables are wrapped as pointers, which see the elements they refer to change.
+set_subscript_array_value(0, 60)
+set_subscript_array_value(2, 62)
+swig_check(deref_const_int_ptr(cvar.element_ref), 60)
+swig_check(deref_const_int_ptr(cvar.forwarded_element), 62)
+
+# auto drops a reference hidden by a typedef.
+swig_check(cvar.typedef_ref_element, 71)
+swig_assert(isinstance(cvar.typedef_ref_element, int), "typedef_ref_element should be an int")
+swig_check(cvar.typedef_ref_copy, 70)
+swig_assert(isinstance(cvar.typedef_ref_copy, int), "typedef_ref_copy should be an int")
+swig_check(deref_const_int_ptr(cvar.typedef_ref_address), 70)
+swig_check(deref_const_int_ptr(cvar.typedef_ref_forwarded), 71)
+swig_check(cvar.typedef_ref_paren, 70)
+swig_assert(isinstance(cvar.typedef_ref_paren_class, RefIndexedInt), "typedef_ref_paren_class should be a RefIndexedInt")
+
 # A C-style cast deduces the type it casts to, and a dereference the type pointed to.
 swig_check(deref_const_int_ptr(cvar.cstyle_cast_ptr), 0)
 swig_assert(cvar.cstyle_cast_null is None, "cstyle_cast_null")

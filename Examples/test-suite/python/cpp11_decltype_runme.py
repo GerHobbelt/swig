@@ -45,12 +45,16 @@ swig_check(m.via_this(), 3)
 swig_check(m.this_sum(), 4)
 swig_check(m.call(), 7)
 swig_check(m.call_sum(), 14)
-swig_assert(not hasattr(m, "self_ptr"), "self_ptr should be ignored")
-swig_assert(not hasattr(m, "self_deref"), "self_deref should be ignored")
+swig_check(m.self_ptr().d, 3)
+swig_check(m.self_cptr().d, 3)
+swig_check(m.self_deref().d, 3)
+swig_check(m.self_ref_ptr().d, 3)
+swig_check(m.self_cref_deref().d, 3)
 t = cpp11_decltype.TemplateTrailingInt()
 t.v = 5
 swig_check(t.via_this(), 5)
-swig_assert(not hasattr(t, "self_ptr"), "TemplateTrailingInt.self_ptr should be ignored")
+swig_check(t.self_ptr().v, 5)
+swig_check(t.self_deref().v, 5)
 # The member function returning an int, not the global one returning a double.
 swig_check(m.shadowed_call(), 8)
 swig_assert(isinstance(m.shadowed_call(), int), "shadowed_call should return an int")
@@ -58,6 +62,21 @@ swig_assert(isinstance(m.shadowed_call(), int), "shadowed_call should return an 
 swig_check(cpp11_decltype.deref_first(cpp11_decltype.deref_lvalue()), 4)
 swig_check(cpp11_decltype.deref_first(cpp11_decltype.parameter_deref(cpp11_decltype.three_values())), 11)
 swig_check(cpp11_decltype.deref_sum(cpp11_decltype.three_values()), 12)
+
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.subscript_lvalue()), 5)
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.parameter_subscript(cpp11_decltype.three_values(), 2)), 33)
+swig_check(cpp11_decltype.subscript_sum(cpp11_decltype.three_values()), 23)
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.indexed_element()), 9)
+# An 'int &' variable is wrapped as a pointer, which sees the element it refers to change.
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.cvar.subscript_ref), 20)
+cpp11_decltype.set_subscript_value(1, 21)
+swig_check(cpp11_decltype.deref_first(cpp11_decltype.cvar.subscript_ref), 21)
+swig_check(cpp11_decltype.cvar.literal_element_ref, "b")
+# The template argument is an array type, so the member is an array.
+holder = cpp11_decltype.ArrayHolder3()
+holder.held = cpp11_decltype.three_values()
+swig_check(cpp11_decltype.deref_first(holder.held), 11)
+swig_check(cpp11_decltype.ArrayHolder3.count, 3)
 
 # decltype(&i) deduces 'int *', so the address is returned rather than the function being ignored.
 if b.get_number_address(None) is None:

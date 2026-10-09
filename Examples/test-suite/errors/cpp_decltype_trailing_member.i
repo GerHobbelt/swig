@@ -19,12 +19,31 @@ struct Members {
 };
 
 struct This {
-  auto self_ptr() -> decltype(this) { return this; }
-  auto self_deref() const -> decltype(*this) { return *this; }
-  auto paren_self() -> decltype((this)) { return this; }
+  int d;
+  auto member_of_deref() -> decltype((*this).d) { return d; }
 };
 
-template<class T> struct TemplateThis {
-  auto self_ptr() -> decltype(this) { return this; }
+// Also when only the text skipped in a subscript or the arguments of a call names one.
+Inner inners[2];
+int overloaded(int);
+int overloaded(double);
+struct Skipped {
+  int idx;
+  auto index() -> decltype(inners[idx].x) { return inners[idx].x; }
+  auto this_index() -> decltype(inners[this->idx].x) { return inners[idx].x; }
+  auto argument() -> decltype(overloaded(idx)) { return overloaded(idx); }
 };
-%template(TemplateThisInt) TemplateThis<int>;
+
+// A call is overloaded even where %ignore or %rename leaves the target language only one of the overloads.
+%ignore IgnoredOverload::ov(double);
+%rename(ov_double) RenamedOverload::ov(double);
+struct IgnoredOverload {
+  double ov(double) { return 2.5; }
+  int ov(int) { return 1; }
+  auto call() -> decltype(ov(1)) { return ov(1); }
+};
+struct RenamedOverload {
+  int ov(int) { return 1; }
+  double ov(double) { return 2.5; }
+  auto call() -> decltype(ov(1.5)) { return ov(1.5); }
+};

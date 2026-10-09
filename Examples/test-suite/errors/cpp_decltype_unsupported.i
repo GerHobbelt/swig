@@ -24,11 +24,8 @@ decltype(undeclared_variable) unknown_to_swig;
 #include <compare>
 decltype(1 <=> 2) spaceship = (1 <=> 2);
 
-// Array dereference.
-decltype(("abc"[1])) array_deref = 0;
+// Array dereference in a braced initialiser, which SWIG keeps as text.
 constexpr auto array_deref2{"abc"[1]};
-decltype("abc"[1]) array_deref3 = 0;
-constexpr auto array_deref4 = ("abc"[1]);
 // FIXME: SWIG parses no parenthesised direct initialisation, of any type, see issue #869.
 #ifndef SWIG
 constexpr auto array_deref5("abc"[1]);
@@ -43,3 +40,6 @@ constexpr auto gt_test2 = 1 > 2;
 // Assignment.
 bool a;
 decltype((a = true) + 1) assignment = true;
+
+// Parameter.
+void take_assignment(decltype(a = true) c, int n);

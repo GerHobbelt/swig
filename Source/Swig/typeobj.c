@@ -428,6 +428,7 @@ int SwigType_ispointer(const SwigType *t) {
  *
  * Add, remove, and test if a type is a reference.  The deletion and query
  * functions take into account qualifiers (if any).
+ * SwigType_del_reference() requires a reference, SwigType_remove_reference() removes either kind if there is one.
  * ----------------------------------------------------------------------------- */
 
 SwigType *SwigType_add_reference(SwigType *t) {
@@ -465,6 +466,7 @@ int SwigType_isreference(const SwigType *t) {
  *
  * Add, remove, and test if a type is a rvalue reference.  The deletion and query
  * functions take into account qualifiers (if any).
+ * SwigType_del_rvalue_reference() requires one, SwigType_remove_reference() removes either kind if there is one.
  * ----------------------------------------------------------------------------- */
 
 SwigType *SwigType_add_rvalue_reference(SwigType *t) {
@@ -543,6 +545,8 @@ int SwigType_isvariadic(const SwigType *t) {
  * is alphabetical---meaning that "const volatile" and "volatile const" are
  * stored in exactly the same way as "q(const volatile)".
  * 'qual' can be a list of multiple qualifiers in any order, separated by spaces.
+ * SwigType_del_qualifier() requires a qualifier, SwigType_remove_qualifier() removes the top level ones if there are
+ * any and SwigType_strip_qualifiers() those at every level.
  * ----------------------------------------------------------------------------- */
 
 SwigType *SwigType_add_qualifier(SwigType *t, const_String_or_char_ptr qual) {
@@ -624,14 +628,28 @@ int SwigType_isqualifier(const SwigType *t) {
 /* -----------------------------------------------------------------------------
  *                    Top level reference and cv-qualifiers
  *
+ * SwigType_isanyreference()
  * SwigType_remove_reference()
  * SwigType_remove_qualifier()
  * SwigType_remove_qualifier_reference()
  *
- * Counterparts of std::remove_reference, std::remove_cv and std::remove_cvref.
- * Each modifies t in place and returns it.  Unlike SwigType_del_reference() and
- * SwigType_del_qualifier(), t need not have the element being removed.
+ * Counterparts of std::is_reference, std::remove_reference, std::remove_cv and
+ * std::remove_cvref.  Each remove function modifies t in place and returns it.
+ * Unlike SwigType_del_reference() and SwigType_del_qualifier(), t need not have
+ * the element being removed.  SwigType_strip_qualifiers() removes the qualifiers
+ * at every level instead of the top level ones.
  * ----------------------------------------------------------------------------- */
+
+/* -----------------------------------------------------------------------------
+ * SwigType_isanyreference()
+ *
+ * Returns 1 if t is an lvalue or an rvalue reference, which SwigType_isreference()
+ * and SwigType_isrvalue_reference() each test for one of.
+ * ----------------------------------------------------------------------------- */
+
+int SwigType_isanyreference(const SwigType *t) {
+  return SwigType_isreference(t) || SwigType_isrvalue_reference(t);
+}
 
 /* -----------------------------------------------------------------------------
  * SwigType_remove_reference()
@@ -640,7 +658,7 @@ int SwigType_isqualifier(const SwigType *t) {
  * ----------------------------------------------------------------------------- */
 
 SwigType *SwigType_remove_reference(SwigType *t) {
-  if (SwigType_isreference(t) || SwigType_isrvalue_reference(t))
+  if (SwigType_isanyreference(t))
     Delete(SwigType_pop(t));
   return t;
 }
@@ -819,7 +837,7 @@ SwigType *SwigType_pop_arrays(SwigType *t) {
  * A pointer that is itself qualified, as in 'q(const).p.a(4).int', is not looked through. */
 SwigType *SwigType_pop_to_array(SwigType *t) {
   SwigType *ptr_or_ref;
-  if (!SwigType_ispointer(t) && !SwigType_isreference(t) && !SwigType_isrvalue_reference(t))
+  if (!SwigType_ispointer(t) && !SwigType_isanyreference(t))
     return 0;
   ptr_or_ref = SwigType_pop(t);
   if (!SwigType_isarray(t)) {
@@ -1660,7 +1678,8 @@ String *SwigType_prefix(const SwigType *t) {
 /* -----------------------------------------------------------------------------
  * SwigType_strip_qualifiers()
  *
- * Strip all qualifiers from a type and return a new type
+ * Strip all qualifiers from a type and return a new type.
+ * SwigType_remove_qualifier() removes only the top level ones, in place.
  * ----------------------------------------------------------------------------- */
 
 SwigType *SwigType_strip_qualifiers(const SwigType *t) {
