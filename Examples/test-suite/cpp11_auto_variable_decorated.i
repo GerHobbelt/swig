@@ -26,6 +26,7 @@
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) array_decay_ptr;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) carray_decay;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) cptr_from_cint;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) static_var_ptr;
 
 #if defined(SWIGC)
 // TODO: Fix the experimental C backend emitting 'int (*)(int)*' for a function pointer.
@@ -34,8 +35,21 @@
 // TODO: Fix the experimental C backend emitting 'int [4]*' for an array variable and 'int (*)[4]*'
 // for a pointer to an array.
 %ignore array_ref;
+%ignore ref_string;
+%ignore fwd_string;
+%ignore cref_string;
+%ignore cref_post_string;
+%ignore ref_string_wide;
 %ignore array_first;
 %ignore int_array_address;
+// TODO: Fix the experimental C backend's member pointer support (see member_pointer in FAILING_CPP_TESTS).
+%ignore member_ptr;
+%ignore static_fn_ptr;
+%ignore call_fn0;
+%ignore member_fn_ptr;
+%ignore member_ptr_decltype;
+%ignore use_member_ptr;
+%ignore use_member_fn_ptr;
 #endif
 
 %inline %{
@@ -125,4 +139,31 @@ auto array_decay = int_array;        // int *
 auto* array_decay_ptr = int_array;   // int *
 auto carray_decay = cint_array;      // const int *
 auto& array_ref = int_array;         // int (&)[4], wrapped as int [4]
+
+struct Pt {
+  int a;
+  int m() const { return a + 1; }
+  static int sm() { return 2; }
+  static int sv;
+};
+int Pt::sv = 3;
+Pt pt_instance = { 5 };
+
+int call_fn0(int (*fn)()) { return fn(); }
+int use_member_ptr(const Pt &p, int Pt::*mp) { return p.*mp; }
+int use_member_fn_ptr(const Pt &p, int (Pt::*mfp)() const) { return (p.*mfp)(); }
+
+// The address of a qualified non-static member is a pointer to member, the address of a static member a plain pointer.
+auto member_ptr = &Pt::a;                        // int Pt::*
+auto member_fn_ptr = &Pt::m;                     // int (Pt::*)() const
+decltype(&Pt::a) member_ptr_decltype = &Pt::a;   // int Pt::*
+auto static_fn_ptr = &Pt::sm;                    // int (*)()
+auto static_var_ptr = &Pt::sv;                   // int *
+
+// A reference binds to the array of characters a string literal is, not to the pointer it decays to.
+auto& ref_string = "text";              // const char (&)[5]
+auto&& fwd_string = "text";             // const char (&)[5]
+const auto& cref_string = "text";       // const char (&)[5]
+auto const& cref_post_string = "te" "xt";  // const char (&)[5]
+auto& ref_string_wide = L"text";        // const wchar_t (&)[5]
 %}

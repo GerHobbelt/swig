@@ -129,6 +129,9 @@ extern SwigType *SwigType_new_auto(const_String_or_char_ptr conceptid);
 extern SwigType *SwigType_add_auto(SwigType *t);
 extern SwigType *SwigType_add_qualifier(SwigType *t, const_String_or_char_ptr qual);
 extern SwigType *SwigType_del_qualifier(SwigType *t);
+extern SwigType *SwigType_remove_reference(SwigType *t);
+extern SwigType *SwigType_remove_qualifier(SwigType *t);
+extern SwigType *SwigType_remove_qualifier_reference(SwigType *t);
 extern SwigType *SwigType_add_function(SwigType *t, ParmList *parms);
 extern SwigType *SwigType_add_template(SwigType *t, ParmList *parms);
 extern SwigType *SwigType_pop_function(SwigType *t);
@@ -169,6 +172,9 @@ extern int SwigType_isauto(const SwigType *t);
 extern int SwigType_isconcept(const SwigType *t);
 extern String *SwigType_concept_name(const SwigType *t);
 extern SwigType *SwigType_replace_auto_base(const SwigType *t, const String *new_base);
+extern SwigType *SwigType_new_decltype(const_String_or_char_ptr expr);
+extern int SwigType_isdecltype(const SwigType *t);
+extern String *SwigType_decltype_expr(const SwigType *t);
 extern int SwigType_check_decl(const SwigType *t, const_String_or_char_ptr decl);
 extern SwigType *SwigType_strip_qualifiers(const SwigType *t);
 extern SwigType *SwigType_strip_single_qualifier(const SwigType *t);
@@ -313,6 +319,7 @@ extern String *Swig_name_fulldecl(Node *n);
 
 extern void Swig_name_object_set(Hash *namehash, String *name, SwigType *decl, DOH *object);
 extern DOH *Swig_name_object_get(Hash *namehash, String *prefix, String *name, SwigType *decl);
+extern SwigType *Swig_name_constrained_decl(const SwigType *decl, Node *constraint, ParmList *templateparms);
 extern void Swig_name_object_inherit(Hash *namehash, String *base, String *derived);
 extern void Swig_features_get(Hash *features, String *prefix, String *name, SwigType *decl, Node *n);
 extern void Swig_feature_set(Hash *features, const_String_or_char_ptr name, SwigType *decl, const_String_or_char_ptr featurename,
@@ -459,6 +466,7 @@ extern String *Constraint_str(Node *n);
 extern String *Constraint_signature_str(Node *n);
 extern int Constraint_signatures_equal(Node *a, Node *b);
 extern int Constraint_differently_constrained(Node *a, Node *b);
+extern String *Constraint_match_str(Node *constraint, ParmList *templateparms);
 
 /* hacks defined in C++ ! */
 extern int Swig_director_mode(void);

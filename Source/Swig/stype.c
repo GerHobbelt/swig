@@ -255,10 +255,7 @@ int SwigType_isconst(const SwigType *t) {
 
 int SwigType_ismutable(const SwigType *t) {
   int r;
-  SwigType *qt = SwigType_typedef_resolve_all(t);
-  if (SwigType_isreference(qt) || SwigType_isrvalue_reference(qt)) {
-    Delete(SwigType_pop(qt));
-  }
+  SwigType *qt = SwigType_remove_reference(SwigType_typedef_resolve_all(t));
   while (SwigType_isarray(qt)) {
     Delete(SwigType_pop(qt));
   }
@@ -703,11 +700,8 @@ SwigType *SwigType_ltype(const SwigType *s) {
   int ignore_member_function_qualifiers = 0;
 
   result = NewStringEmpty();
-  tc = Copy(s);
   /* Nuke all leading qualifiers */
-  while (SwigType_isqualifier(tc)) {
-    Delete(SwigType_pop(tc));
-  }
+  tc = SwigType_remove_qualifier(Copy(s));
   if (SwigType_issimple(tc)) {
     /* Resolve any typedef definitions */
     SwigType *tt = Copy(tc);
@@ -1325,7 +1319,20 @@ void SwigType_typename_replace(SwigType *t, String *pat, String *rep) {
   ilen = Len(elem);
   for (i = 0; i < ilen; i++) {
     String *e = Getitem(elem, i);
-    if (SwigType_issimple(e)) {
+    if (SwigType_isdecltype(e)) {
+      /* The expression is C++ text rather than a type, so a name in it becomes the C++ spelling of rep, as in
+       * 'decltype(N + 1)' becoming 'decltype(3 + 1)' or 'decltype(T())' becoming 'decltype(double())' */
+      String *expr = SwigType_decltype_expr(e);
+      String *repstr = SwigType_str(rep, 0);
+      SwigType *replaced;
+      Replace(expr, pat, repstr, DOH_REPLACE_ID);
+      replaced = SwigType_new_decltype(expr);
+      Clear(e);
+      Append(e, replaced);
+      Delete(replaced);
+      Delete(repstr);
+      Delete(expr);
+    } else if (SwigType_issimple(e)) {
       if (Equal(e, pat)) {
         /* Replaces a type of the form 'pat' with 'rep<args>' */
         if (SwigType_isconst(rep) && i > 0 && SwigType_isconst(Getitem(elem, i - 1))) {

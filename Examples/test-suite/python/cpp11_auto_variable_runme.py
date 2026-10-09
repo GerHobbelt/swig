@@ -29,3 +29,31 @@ for name in ["promoted_short", "promoted_ushort", "promoted_char", "promoted_boo
     setattr(cvar, name, 100000)
     swig_check(getattr(cvar, name), 100000)
 swig_check(cvar.negated_short, -1)
+
+# A typedef hiding const or an array does not stop deduction dropping or decaying it.
+swig_check(cvar.typedef_const, 4)
+cvar.typedef_const = 40
+swig_check(cvar.typedef_const, 40)
+swig_check(int_ptr_second(cvar.typedef_array), 6)
+swig_check(int_ptr_second(cvar.typedef_array_ptr), 6)
+swig_check(cvar.typedef_alias, 8)
+
+# A functional cast to a class deduces the class.
+swig_check(cvar.class_brace.y, 2)
+swig_check(cvar.class_paren.v, 3)
+swig_check(cvar.class_empty.x, 0)
+swig_check(cvar.class_alias.y, 5)
+swig_check(cvar.class_qualified.i, 6)
+swig_check(cvar.class_template.t, 7)
+swig_assert(cvar.class_forward is not None, "class_forward")
+swig_check(cvar.long_brace, 9)
+swig_check(point_x(), 10)
+
+# An enumerator in a namespace or a class deduces the qualified enumeration.
+swig_check(cvar.namespace_enumerator, auto_dark)
+swig_check(cvar.class_enumerator, AutoHolder.auto_big)
+
+# An unscoped enumerator qualified by its enumeration deduces the enumeration.
+swig_check(cvar.qualified_enumerator, auto_green)
+swig_check(cvar.nested_qualified_enumerator, auto_dark)
+swig_check(cvar.class_qualified_enumerator, AutoHolder.auto_big)

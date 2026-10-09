@@ -102,6 +102,25 @@ static auto paren_nested_ptr = ((ptr_zero));  // int *
 static auto paren_nested = ((one));
 %}
 
+// A typedef does not stop the top level const being dropped or an array decaying, and is kept when it hides neither.
+
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) typedef_array;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) typedef_array_ptr;
+
+%inline %{
+typedef const int ConstInt;
+typedef int IntArray3[3];
+typedef int IntAlias;
+static ConstInt const_int_value = 4;
+static IntArray3 int_array3 = {5, 6, 7};
+static IntAlias int_alias_value = 8;
+static auto typedef_const = const_int_value;  // int
+static auto typedef_array = int_array3;       // int *
+static auto *typedef_array_ptr = int_array3;  // int *
+static auto typedef_alias = int_alias_value;  // IntAlias
+static int int_ptr_second(const int *p) { return p[1]; }
+%}
+
 %inline %{
 // Concatenation of a literal with an encoding prefix and one without
 // was added in C++11.
@@ -122,6 +141,47 @@ static auto promoted_ushort = +ushort_value;
 static auto negated_short = -short_value;
 static auto promoted_char = +char_value;
 static auto promoted_bool = +bool_value;
+%}
+
+// A functional cast to a class, or a typedef of one, deduces the class.
+%{
+struct AutoForward { int f; };
+%}
+struct AutoForward;
+%inline %{
+struct AutoPoint { int x; int y; };
+struct AutoConv { AutoConv(int v) : v(v) {} int v; };
+typedef AutoPoint AutoPointAlias;
+namespace AutoSpace { struct Inner { int i; }; }
+template<class T> struct AutoBox { T t; };
+%}
+%template(AutoBoxInt) AutoBox<int>;
+%inline %{
+static auto class_brace = AutoPoint{1, 2};              // AutoPoint
+static auto class_paren = AutoConv(3);                  // AutoConv
+static auto class_empty = AutoPoint();                  // AutoPoint
+static auto class_alias = AutoPointAlias{4, 5};         // AutoPointAlias
+static auto class_qualified = AutoSpace::Inner{6};      // AutoSpace::Inner
+static auto class_template = AutoBox<int>{7};           // AutoBox<int>
+static auto class_forward = AutoForward{8};             // AutoForward
+static auto long_brace = long{9};                       // long
+static int point_x(AutoPoint p = AutoPoint{10, 11}) { return p.x; }
+%}
+
+// An enumerator of an enumeration in a namespace or a class deduces the qualified enumeration.
+%inline %{
+namespace AutoSpace { enum AutoShade { auto_light, auto_dark }; }
+struct AutoHolder { enum AutoSize { auto_small, auto_big }; };
+static auto namespace_enumerator = AutoSpace::auto_dark;        // AutoSpace::AutoShade
+static auto class_enumerator = AutoHolder::auto_big;            // AutoHolder::AutoSize
+%}
+
+// An enumerator of an unscoped enumeration qualified by the enumeration's name, as C++11 allows.
+%inline %{
+enum AutoColour { auto_red, auto_green };
+static auto qualified_enumerator = AutoColour::auto_green;                   // AutoColour
+static auto nested_qualified_enumerator = AutoSpace::AutoShade::auto_dark;   // AutoSpace::AutoShade
+static auto class_qualified_enumerator = AutoHolder::AutoSize::auto_big;     // AutoHolder::AutoSize
 %}
 
 %inline %{

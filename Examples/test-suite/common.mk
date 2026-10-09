@@ -646,11 +646,14 @@ CPP11_TEST_CASES += \
 	cpp11_auto_variable \
 	cpp11_auto_variable_decorated \
 	cpp11_auto_variable_list \
+	cpp11_auto_variable_new_expression \
+	cpp11_auto_variable_template_parameter \
 	cpp11_brackets_expression \
 	cpp11_constexpr \
 	cpp11_constexpr_friend \
 	cpp11_copyctor_delete \
 	cpp11_decltype \
+	cpp11_decltype_nontype_template_parameter \
 	cpp11_default_delete \
 	cpp11_delegating_constructors \
 	cpp11_director_enums \
@@ -732,6 +735,7 @@ CPP14_TEST_BROKEN = \
 
 # C++17 test cases.
 CPP17_TEST_CASES += \
+	cpp17_auto_nontype_template_parameter \
 	cpp17_auto_variable_braced \
 	cpp17_class_template_argument_deduction \
 	cpp17_director_string_view \
@@ -760,6 +764,7 @@ CPP20_TEST_CASES += \
 	cpp20_abbreviated_template_mixed \
 	cpp20_abbreviated_template_overloads \
 	cpp20_alias_template \
+	cpp20_auto_variable_new_expression \
 	cpp20_concepts \
 	cpp20_concepts_class_methods \
 	cpp20_concepts_classes \
@@ -769,6 +774,7 @@ CPP20_TEST_CASES += \
 	cpp20_concepts_lambda \
 	cpp20_concepts_overloads \
 	cpp20_constexpr_destructor \
+	cpp20_constrained_template_directives \
 	cpp20_lambda_template \
 	cpp20_spaceship_operator \
 	cpp20_structured_bindings \

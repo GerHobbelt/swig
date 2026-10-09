@@ -893,8 +893,8 @@ static void add_symbols(Node *n) {
             }
           } else if (Getattr(n, "autoliteralprefix")) {
             Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n),
-                "Unable to deduce auto type for variable '%s' from a string literal with a '%s' prefix (ignored).\n",
-                Swig_name_decl(n), Getattr(n, "autoliteralprefix"));
+                "Unable to deduce auto type for variable '%s' from a %s literal with a '%s' prefix (ignored).\n",
+                Swig_name_decl(n), Getattr(n, "autoliteralkind"), Getattr(n, "autoliteralprefix"));
           } else if (value) {
             Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' from initialiser '%s' (ignored).\n",
                 Swig_name_decl(n), value);
@@ -905,6 +905,17 @@ static void add_symbols(Node *n) {
           SWIG_WARN_NODE_END(n);
           SetFlag(n, "feature:ignore");
 	}
+      }
+      if (Getattr(n, "decltypeunusable")) {
+        /* A trailing return type decltype over the function's parameters that no type could be deduced for, which
+         * would not compile in the wrapper, where the parameters are not in scope. */
+        if (!(Getattr(n, "feature:ignore") || Strncmp(symname, "$ignore", 7) == 0)) {
+          SWIG_WARN_NODE_BEGIN(n);
+          Swig_warning(WARN_CPP11_DECLTYPE, Getfile(n), Getline(n), "Unable to deduce decltype for '%s' in the trailing return type of '%s' (ignored).\n",
+              Getattr(n, "decltypeunusable"), Swig_name_decl(n));
+          SWIG_WARN_NODE_END(n);
+          SetFlag(n, "feature:ignore");
+        }
       }
       if (Getattr(n, "autotypemismatch")) {
         /* Two declarators of one 'auto' declaration deduced different types, which C++ does not allow, so the
@@ -1611,7 +1622,23 @@ Node *Swig_cparse(File *f) {
   return (Node *)top;
 }
 
-static void single_new_feature(const char *featurename, String *val, Hash *featureattribs, char *declaratorid, SwigType *type, ParmList *declaratorparms, String *qualifier) {
+/* The declarator that a %rename, %ignore or %feature matches: 'decl', keyed on the directive's requires-clause
+ * 'constraint' as well if it has one, so that it names only the function template with that constraint. */
+static SwigType *directive_decl(SwigType *decl, Node *constraint) {
+  SwigType *constrained = constraint ? Swig_name_constrained_decl(decl, constraint, 0) : 0;
+  if (!constrained)
+    return decl;
+  Delete(decl);
+  return constrained;
+}
+
+/* A requires-clause in a directive can only follow a function declarator, 'type' being the declarator's type. */
+static void directive_constraint_check(SwigType *type, Node *constraint) {
+  if (constraint && !(type && SwigType_isfunction(type)))
+    Swig_error(cparse_file, cparse_line, "A requires-clause in a directive must follow a function declarator.\n");
+}
+
+static void single_new_feature(const char *featurename, String *val, Hash *featureattribs, char *declaratorid, SwigType *type, ParmList *declaratorparms, String *qualifier, Node *constraint) {
   String *fname;
   String *name;
   String *fixname;
@@ -1636,7 +1663,7 @@ static void single_new_feature(const char *featurename, String *val, Hash *featu
   if (t) {
     if (qualifier) SwigType_push(t,qualifier);
     if (SwigType_isfunction(t)) {
-      SwigType *decl = SwigType_pop_function(t);
+      SwigType *decl = directive_decl(SwigType_pop_function(t), constraint);
       if (SwigType_ispointer(t)) {
 	String *nname = NewStringf("*%s",name);
 	Swig_feature_set(Swig_cparse_features(), nname, decl, fname, val, featureattribs);
@@ -1661,7 +1688,7 @@ static void single_new_feature(const char *featurename, String *val, Hash *featu
 /* Add a new feature to the Hash. Additional features are added if the feature has a parameter list (declaratorparms)
  * and one or more of the parameters have a default argument. An extra feature is added for each defaulted parameter,
  * simulating the equivalent overloaded method. */
-static void new_feature(const char *featurename, String *val, Hash *featureattribs, char *declaratorid, SwigType *type, ParmList *declaratorparms, String *qualifier) {
+static void new_feature(const char *featurename, String *val, Hash *featureattribs, char *declaratorid, SwigType *type, ParmList *declaratorparms, String *qualifier, Node *constraint) {
 
   ParmList *declparms = declaratorparms;
 
@@ -1669,8 +1696,10 @@ static void new_feature(const char *featurename, String *val, Hash *featureattri
   String *newval = remove_block(featureattribs, val);
   val = newval ? newval : val;
 
+  directive_constraint_check(type, constraint);
+
   /* Add the feature */
-  single_new_feature(featurename, val, featureattribs, declaratorid, type, declaratorparms, qualifier);
+  single_new_feature(featurename, val, featureattribs, declaratorid, type, declaratorparms, qualifier, constraint);
 
   /* Add extra features if there are default parameters in the parameter list */
   if (type) {
@@ -1686,7 +1715,7 @@ static void new_feature(const char *featurename, String *val, Hash *featureattri
         Delete(SwigType_pop_function(newtype)); /* remove the old parameter list from newtype */
         SwigType_add_function(newtype,newparms);
 
-        single_new_feature(featurename, Copy(val), featureattribs, declaratorid, newtype, newparms, qualifier);
+        single_new_feature(featurename, Copy(val), featureattribs, declaratorid, newtype, newparms, qualifier, constraint);
         declparms = newparms;
       } else {
         declparms = 0;
@@ -2016,6 +2045,8 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
     String *final;
     /* C++20 trailing requires-clause attached to this declaration's qualifiers, as a structured constraint subtree. */
     Node *constraint_node;
+    /* The pointer type of a new-expression, which the T_* code in 'type' cannot describe. */
+    SwigType *newtype;
   } dtype;
   struct {
     String *filename;
@@ -2131,6 +2162,14 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %left  PLUS MINUS
 %left  STAR SLASH MODULO
 %precedence UMINUS NOT LNOT CAST
+/* A '{' after the type-id of a new-expression is its braced initialiser, as in 'new int{5}', rather than a '{' after
+   the declaration the new-expression initialises, so the empty initialiser gives way to it. */
+%precedence NO_NEW_INITIALIZER
+/* A '{' after a type in an expression is a functional cast such as 'Pt{1, 2}', so the type gives way to it.  The
+   one place the '{' could be something else is after the width of a bit-field, as in the C++20 'int x : W {5};',
+   where the initialiser is then read as part of the width, which SWIG keeps only as text. */
+%precedence EXPR_TYPE
+%precedence LBRACE
 %token DCOLON
 
 %type <node>     program interface declaration swig_directive ;
@@ -2176,10 +2215,14 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <intvalue> variadic_opt;
 %type <type>     type rawtype type_right anon_bitfield_type decltype decltypeexpr cpp_alternate_rettype explicit_instantiation_rettype trailing_rettype;
 %type <str>      decltype_prefix;
+%type <type>     conversion_declarator;
 %type <str>      noexcept_specifier_opt;
 %type <str>      structured_binding_names;
 %type <bases>    base_list inherit raw_inherit;
 %type <dtype>    definetype def_args etype default_delete deleted_definition explicit_default;
+%type <dtype>    new_expression auto_initializer;
+%type <type>     new_type_id new_array_declarator;
+%type <str>      new_keyword new_initializer_opt;
 %type            deleted_reason;
 %type <dtype>    expr exprnum exprsimple exprcompound valexpr exprmem;
 %type <id>       ename ;
@@ -2235,6 +2278,13 @@ static ParmList *trailing_rettype_parms = 0;
    promote_abbreviated_template() to complete then. */
 static String *trailing_rettype_placeholder_parm = 0;
 
+/* Set when the expression grammar meets the name of a parameter of the trailing return type being parsed, and cleared
+   at the start of each decltype.  A decltype over a parameter that no type is deduced for cannot be left in the
+   wrapper, where the parameter is not in scope, so its operand is kept in 'trailing_rettype_unusable' for the
+   declaration to be ignored. */
+static int decltype_mentions_parm = 0;
+static String *trailing_rettype_unusable = 0;
+
 /* Apply the parameter adjustments of C++ [dcl.fct]/5 to the copy 't': an array parameter has the type pointer to
    element and a function parameter the type pointer to function.  normalize_parms() in typepass.cxx applies the
    function half to the parameter itself, but that is a later pass and a decltype here is resolved while parsing. */
@@ -2261,35 +2311,114 @@ static void adjust_parm_type(SwigType *t) {
    being parsed, or 0 when there is no such parameter.  Never 0 for a parameter that does exist: the caller reads 0
    as "not in scope" and carries on into the enclosing scope, where an unrelated declaration would shadow it. */
 static SwigType *trailing_rettype_parm_type(String *name) {
-  Parm *p;
-  for (p = trailing_rettype_parms; p; p = nextSibling(p)) {
-    String *pname = Getattr(p, "name");
-    SwigType *ptype = Getattr(p, "type");
-    if (pname && ptype && Equal(pname, name)) {
-      SwigType *t = Copy(ptype);
-      if (SwigType_isauto(t)) {
-        Delete(trailing_rettype_placeholder_parm);
-        trailing_rettype_placeholder_parm = Copy(pname);
-      }
-      adjust_parm_type(t);
-      return t;
-    }
+  Parm *p = ParmList_find_name(trailing_rettype_parms, name);
+  SwigType *t;
+  if (!p || !Getattr(p, "type"))
+    return 0;
+  t = Copy(Getattr(p, "type"));
+  if (SwigType_isauto(t)) {
+    Delete(trailing_rettype_placeholder_parm);
+    trailing_rettype_placeholder_parm = Copy(name);
   }
-  return 0;
+  adjust_parm_type(t);
+  return t;
 }
 
-/* Look 'name' up as a function parameter of a trailing return type being parsed, then in the symbol table, and
-   return a copy of the type it was declared with, with its declarator applied, so that the 'pg' of 'int *pg;'
-   gives 'p.int' and not just the 'int' held in the "type" attribute.  Returns 0 when the name is not in scope. */
+/* The T_* type code of the parameter named 'name' of the function whose trailing return type is being parsed, for the
+   expression grammar, which otherwise finds only what the symbol table has under that name.  Only an arithmetic or
+   character type is described by its code.  Any other type is T_UNKNOWN, so that a pointer parameter is not taken
+   for the type it points to.  Returns 0 when 'name' is not such a parameter. */
+static int trailing_rettype_parm_type_code(String *name) {
+  Parm *p = ParmList_find_name(trailing_rettype_parms, name);
+  SwigType *type;
+  int code;
+  if (!p || !Getattr(p, "type"))
+    return 0;
+  decltype_mentions_parm = 1;
+  type = SwigType_remove_qualifier_reference(Copy(Getattr(p, "type")));
+  code = SwigType_type(type);
+  Delete(type);
+  return code < T_AUTO || code == T_CHAR || code == T_WCHAR ? code : T_UNKNOWN;
+}
+
+/* The template parameter named 'name' of the template declaration being parsed, or of the class template it is a
+   member of, or 0 if there is none. */
+static Parm *template_parameter_named(String *name) {
+  Parm *p = ParmList_find_name(template_parameters, name);
+  if (!p && currentOuterClass)
+    p = ParmList_find_name(Getattr(currentOuterClass, "template_parameters"), name);
+  return p;
+}
+
+/* Whether the template parameter 'p' is a type template parameter, the 'T' of 'template<class T>'. */
+static int template_parm_is_type(Parm *p) {
+  SwigType *type = Getattr(p, "type");
+  return Equal(type, "typename") || Equal(type, "class");
+}
+
+/* Whether 'name' is a type template parameter of the template declaration being parsed. */
+static int names_type_template_parameter(String *name) {
+  Parm *p = template_parameter_named(name);
+  return p && template_parm_is_type(p);
+}
+
+/* Whether the template parameter 'p' is a non-type template parameter, the 'N' of 'template<int N>' or
+   'template<auto N>'.  A template template parameter has the 'template< ... > class' type the template_parm rule
+   gives it, and a pack is neither. */
+static int template_parm_is_nontype(Parm *p) {
+  SwigType *type = Getattr(p, "type");
+  return type && !template_parm_is_type(p) && !SwigType_isvariadic(type) && Strncmp(type, "template< ", 10) != 0;
+}
+
+/* The type of an id-expression naming the non-type template parameter 'name', which is the type the parameter is
+   declared with, without its top level cv-qualifiers.  For a placeholder, the 'N' of 'template<auto N>', that is the
+   type of the template argument, which is left as 'decltype(N)' for the instantiation to resolve.  Returns 0 when
+   'name' is not a non-type template parameter. */
+static SwigType *nontype_template_parameter_type(String *name) {
+  Parm *p = template_parameter_named(name);
+  SwigType *type;
+  if (!p || !template_parm_is_nontype(p))
+    return 0;
+  type = Getattr(p, "type");
+  return SwigType_isauto(type) ? SwigType_new_decltype(name) : SwigType_remove_qualifier(Copy(type));
+}
+
+/* The enumerator named by the qualified 'name' when it is 'E::X' for an unscoped enumeration 'E', whose enumerators
+   are in the enclosing scope and so are not found by looking 'name' up, or 0 if 'name' is not such a name. */
+static Node *qualified_unscoped_enumerator(String *name) {
+  String *prefix = Swig_scopename_prefix(name);
+  Node *item = 0;
+  if (prefix) {
+    Node *e = Swig_symbol_clookup(prefix, 0);
+    if (e && Equal(nodeType(e), "enum") && !GetFlag(e, "scopedenum")) {
+      String *last = Swig_scopename_last(name);
+      item = Swig_symbol_clookup(last, Getattr(e, "sym:symtab"));
+      if (!item || !Equal(nodeType(item), "enumitem") || parentNode(item) != e)
+        item = 0;
+      Delete(last);
+    }
+    Delete(prefix);
+  }
+  return item;
+}
+
+/* Look 'name' up as a function parameter of a trailing return type being parsed, then as a non-type template
+   parameter, then in the symbol table, and return a copy of the type it was declared with, with its declarator
+   applied, so that the 'pg' of 'int *pg;' gives 'p.int' and not just the 'int' held in the "type" attribute.
+   Returns 0 when the name is not in scope. */
 static SwigType *symbol_full_type(String *name) {
   Node *n;
   SwigType *type;
   SwigType *decl;
   String *storage;
   type = trailing_rettype_parm_type(name);
+  if (!type)
+    type = nontype_template_parameter_type(name);
   if (type)
     return type;
   n = Swig_symbol_clookup(name, 0);
+  if (!n)
+    n = qualified_unscoped_enumerator(name);
   if (!n)
     return 0;
   if (Equal(nodeType(n), "enumitem")) {
@@ -2300,7 +2429,15 @@ static SwigType *symbol_full_type(String *name) {
   type = Getattr(n, "type");
   if (!type)
     return 0;
-  type = Copy(type);
+  if (Equal(nodeType(n), "enum") && Getattr(n, "name") && Strncmp(type, "enum ", 5) == 0) {
+    /* The "type" of an enum names it unqualified, as in 'enum NE' for the enum 'NE' of namespace 'N', which does not
+     * name it outside of its scope. */
+    String *scope = Swig_symbol_qualifiedscopename(Getattr(n, "sym:symtab"));
+    type = scope ? NewStringf("enum %s::%s", scope, Getattr(n, "name")) : Copy(type);
+    Delete(scope);
+  } else {
+    type = Copy(type);
+  }
   decl = Getattr(n, "decl");
   if (decl)
     SwigType_push(type, decl);
@@ -2331,13 +2468,43 @@ static SwigType *deduce_type_from_value(String *val, int type_code) {
      * something.  The unary '&' rule spells the value '&' followed by its operand.  The operand may be a
      * function here, giving a function pointer. */
     String *operand = NewString(Char(val) + 1);
+    Node *n = Strstr(operand, "::") ? Swig_symbol_clookup(operand, 0) : 0;
+    if (n && GetFlag(n, "ismember") && !Strstr(Getattr(n, "storage"), "static")) {
+      /* The address of a qualified non-static member, such as '&Pt::a', is a pointer to member of the class the
+       * member is declared in, 'int Pt::*'.  An overloaded member function, a reference member or anything that
+       * is not a plain data member or member function (or is only an %extend member) has no such type to give. */
+      String *cls = Swig_symbol_qualifiedscopename(Getattr(n, "sym:symtab"));
+      deduced = 0;
+      if (cls && Equal(nodeType(n), "cdecl") && !Getattr(n, "sym:overloaded") && !GetFlag(n, "isextendmember"))
+        deduced = symbol_full_type(operand);
+      if (deduced && (SwigType_isreference(deduced) || SwigType_isrvalue_reference(deduced))) {
+        Delete(deduced);
+        deduced = 0;
+      }
+      if (deduced) {
+        SwigType *mp = NewStringEmpty();
+        SwigType_add_memberpointer(mp, cls);
+        SwigType_push(deduced, mp);
+        Delete(mp);
+      }
+      Delete(cls);
+      Delete(operand);
+      return deduced;
+    }
+    /* The address of an overloaded function has no type until it is converted to a particular function pointer
+     * type, so there is nothing to deduce, and the first overload found is no more the answer than any other.
+     * A parameter of the same name hides the overloads. */
+    n = ParmList_find_name(trailing_rettype_parms, operand) ? 0 : Swig_symbol_clookup(operand, 0);
+    if (n && Getattr(n, "sym:overloaded")) {
+      Delete(operand);
+      return 0;
+    }
     deduced = symbol_full_type(operand);
     Delete(operand);
     if (deduced) {
       /* Taking the address of a reference gives a pointer to the referred-to type, there being no such thing as
        * a pointer to a reference. */
-      if (SwigType_isreference(deduced) || SwigType_isrvalue_reference(deduced))
-        Delete(SwigType_pop(deduced));
+      SwigType_remove_reference(deduced);
       SwigType_add_pointer(deduced);
       return deduced;
     }
@@ -2359,6 +2526,8 @@ static SwigType *deduce_type_from_value(String *val, int type_code) {
 static SwigType *deduce_type(const struct Define *dtype, int unwrap_parentheses) {
   SwigType *deduced;
   String *unwrapped;
+  if (dtype->newtype)
+    return Copy(dtype->newtype);
   if (!dtype->val)
     return 0;
   if (!unwrap_parentheses)
@@ -2367,6 +2536,26 @@ static SwigType *deduce_type(const struct Define *dtype, int unwrap_parentheses)
   deduced = deduce_type_from_value(unwrapped ? unwrapped : dtype->val, dtype->type);
   Delete(unwrapped);
   return deduced;
+}
+
+/* Set "argtype" on each %template argument in 'args' given for a placeholder non-type template parameter in
+   'tparms', the 'N' of 'template<auto N>', to the type of the argument.  That is the type 'decltype(N)' names in the
+   instantiated template.  A default argument has no type code to deduce a type from and is left without. */
+static void set_placeholder_template_argument_types(ParmList *args, ParmList *tparms) {
+  Parm *p;
+  for (p = args; p; p = nextSibling(p)) {
+    Parm *tp = ParmList_find_name(tparms, Getattr(p, "name"));
+    if (tp && SwigType_isauto(Getattr(tp, "type")) && Getattr(p, "valuetypecode")) {
+      struct Define dtype = default_dtype;
+      SwigType *type;
+      dtype.val = Getattr(p, "value");
+      dtype.type = GetInt(p, "valuetypecode");
+      type = deduce_type(&dtype, 1);
+      if (type)
+        Setattr(p, "argtype", SwigType_remove_qualifier(type));
+      Delete(type);
+    }
+  }
 }
 
 /* Whether 'type' names an enumeration */
@@ -2393,8 +2582,13 @@ static SwigType *decltype_parenthesised_name_type(const struct Define *dtype) {
   unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
   if (!unwrapped)
     return 0;
-  n = Swig_symbol_clookup(unwrapped, 0);
-  type = n && Equal(nodeType(n), "cdecl") ? symbol_full_type(unwrapped) : 0;
+  /* A parameter of a trailing return type being parsed is a variable too, and hides anything of the same name. */
+  if (ParmList_find_name(trailing_rettype_parms, unwrapped)) {
+    type = symbol_full_type(unwrapped);
+  } else {
+    n = Swig_symbol_clookup(unwrapped, 0);
+    type = n && Equal(nodeType(n), "cdecl") ? symbol_full_type(unwrapped) : 0;
+  }
   Delete(unwrapped);
   if (!type)
     return 0;
@@ -2405,8 +2599,7 @@ static SwigType *decltype_parenthesised_name_type(const struct Define *dtype) {
 
   /* A name declared with a reference already denotes an lvalue of the referred-to type, so the reference the
    * parentheses call for is the one it has. */
-  if (SwigType_isreference(type) || SwigType_isrvalue_reference(type))
-    Delete(SwigType_pop(type));
+  SwigType_remove_reference(type);
 
   /* The reference is only added where the variable is wrapped through a pointer either way.  A scalar, an array,
    * a character string and an enumeration are wrapped by value, and wrapping the reference instead would make
@@ -2445,87 +2638,6 @@ static int initialiser_is_parenthesised_name(const struct Define *dtype) {
   return parenthesised_name;
 }
 
-/* Whether the initialiser 'dtype' is an id-expression naming an object, optionally parenthesised, which makes it an
-   lvalue.  A literal and an enumerator are prvalues; the value category of any other expression is not something
-   SWIG tracks, so it is reported as not an lvalue. */
-static int initialiser_is_lvalue(const struct Define *dtype) {
-  String *unwrapped;
-  Node *n;
-  int lvalue = 0;
-  if (!dtype->val)
-    return 0;
-  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
-  n = Swig_symbol_clookup(unwrapped ? unwrapped : dtype->val, 0);
-  if (n && Equal(nodeType(n), "cdecl")) {
-    SwigType *decl = Getattr(n, "decl");
-    lvalue = !decl || !SwigType_isfunction(decl);
-  }
-  Delete(unwrapped);
-  return lvalue;
-}
-
-/* An rvalue reference declarator on an 'auto' placeholder is a forwarding reference, which collapses to an lvalue
-   reference when the initialiser is an lvalue, so 'auto&& r = g;' declares an 'int&'.  Adjusts 'decl' in place. */
-static void collapse_forwarding_reference(SwigType *decl, const struct Define *dtype) {
-  if (SwigType_isrvalue_reference(decl) && initialiser_is_lvalue(dtype)) {
-    Delete(SwigType_pop(decl));
-    SwigType_add_reference(decl);
-  }
-}
-
-/* Deduce the type the 'auto' placeholder stands for in a variable declaration, given 'initialiser_type', the type
-   deduced from the initialiser, and 'decl', the declarator the placeholder carries.  The declarator decoration is
-   not part of the placeholder: for 'auto* p = pg;' with 'pg' declared 'int *', the placeholder stands for 'int'
-   and the 'p.' belongs to the declarator, so the decoration is matched against the initialiser type and removed.
-   A reference declarator binds to the initialiser rather than being deduced from it, so the 'auto&' of
-   'auto& r = g;' with 'g' an 'int' leaves 'int' too.  Returns 0 when the declarator does not match the
-   initialiser type, which is not valid C++ anyway. */
-static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *decl) {
-  SwigType *placeholder = Copy(initialiser_type);
-  SwigType *remaining = Copy(decl);
-  int matched = 1;
-
-  /* An id-expression naming a reference has the type it refers to, so 'auto x = r;' with 'r' an 'int&' deduces
-   * 'int'.  Only 'decltype(auto)' keeps the reference, and that does not come through here. */
-  if (SwigType_isreference(placeholder) || SwigType_isrvalue_reference(placeholder))
-    Delete(SwigType_pop(placeholder));
-
-  if (SwigType_isreference(remaining) || SwigType_isrvalue_reference(remaining)) {
-    Delete(SwigType_pop(remaining));
-  } else {
-    /* Deduction drops the top level cv-qualifiers of the initialiser unless the variable is a reference, so
-     * 'auto x = cg;' with 'cg' declared 'const int' deduces 'int' while 'auto& r = cg;' deduces 'const int'. */
-    while (SwigType_isqualifier(placeholder))
-      Delete(SwigType_pop(placeholder));
-    /* An array decays to a pointer to its first element unless the variable is a reference, so 'auto p = arr;'
-     * with 'arr' an 'int[4]' deduces 'int *' while 'auto& r = arr;' deduces 'int (&)[4]'. */
-    if (SwigType_isarray(placeholder)) {
-      Delete(SwigType_pop(placeholder));
-      SwigType_add_pointer(placeholder);
-    }
-  }
-
-  while (matched && Len(remaining) > 0) {
-    SwigType *op = SwigType_pop(remaining);
-    /* A cv-qualifier in the declarator, as in the 'auto* const' of 'auto* const p = pg;', qualifies the variable
-     * rather than the placeholder, so there is nothing in the initialiser type to match it against. */
-    if (!SwigType_isqualifier(op)) {
-      SwigType *initialiser_op = SwigType_pop(placeholder);
-      if (!initialiser_op || !Equal(op, initialiser_op))
-        matched = 0;
-      Delete(initialiser_op);
-    }
-    Delete(op);
-  }
-
-  Delete(remaining);
-  if (!matched || Len(placeholder) == 0) {
-    Delete(placeholder);
-    placeholder = 0;
-  }
-  return placeholder;
-}
-
 /* Whether the initialiser 'dtype' is a string literal, optionally parenthesised.  The T_STRING code alone does not
    say so: a named cast to 'const char *' summarises to T_STRING too, as does the address of a character and an
    expression such as '"text" + 1' that merely has a literal as an operand, hence the check on the whole text.
@@ -2559,6 +2671,120 @@ static int initialiser_is_string_literal(const struct Define *dtype) {
   return is_literal;
 }
 
+/* Whether the initialiser 'dtype' is an id-expression naming an object, optionally parenthesised, or a string literal,
+   either of which makes it an lvalue.  Any other literal and an enumerator are prvalues; the value category of any
+   other expression is not something SWIG tracks, so it is reported as not an lvalue. */
+static int initialiser_is_lvalue(const struct Define *dtype) {
+  String *unwrapped;
+  Node *n;
+  int lvalue = 0;
+  if (!dtype->val)
+    return 0;
+  if (initialiser_is_string_literal(dtype))
+    return 1;
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  n = Swig_symbol_clookup(unwrapped ? unwrapped : dtype->val, 0);
+  if (n && Equal(nodeType(n), "cdecl")) {
+    SwigType *decl = Getattr(n, "decl");
+    lvalue = !decl || !SwigType_isfunction(decl);
+  }
+  Delete(unwrapped);
+  return lvalue;
+}
+
+/* An rvalue reference declarator on an 'auto' placeholder is a forwarding reference, which collapses to an lvalue
+   reference when the initialiser is an lvalue, so 'auto&& r = g;' declares an 'int&'.  Adjusts 'decl' in place. */
+static void collapse_forwarding_reference(SwigType *decl, const struct Define *dtype) {
+  if (SwigType_isrvalue_reference(decl) && initialiser_is_lvalue(dtype)) {
+    Delete(SwigType_pop(decl));
+    SwigType_add_reference(decl);
+  }
+}
+
+/* Deduce the type the 'auto' placeholder stands for in a variable declaration, given 'initialiser_type', the type
+   deduced from the initialiser, and 'decl', the declarator the placeholder carries.  The declarator decoration is
+   not part of the placeholder: for 'auto* p = pg;' with 'pg' declared 'int *', the placeholder stands for 'int'
+   and the 'p.' belongs to the declarator, so the decoration is matched against the initialiser type and removed.
+   A reference declarator binds to the initialiser rather than being deduced from it, so the 'auto&' of
+   'auto& r = g;' with 'g' an 'int' leaves 'int' too.  Returns 0 when the declarator does not match the
+   initialiser type, which is not valid C++ anyway. */
+static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *decl) {
+  SwigType *placeholder = Copy(initialiser_type);
+  SwigType *remaining = Copy(decl);
+  SwigType *resolved;
+  int matched = 1;
+  int reference;
+
+  /* An id-expression naming a reference has the type it refers to, so 'auto x = r;' with 'r' an 'int&' deduces
+   * 'int'.  Only 'decltype(auto)' keeps the reference, and that does not come through here. */
+  SwigType_remove_reference(placeholder);
+
+  reference = SwigType_isreference(remaining) || SwigType_isrvalue_reference(remaining);
+  if (reference)
+    Delete(SwigType_pop(remaining));
+
+  resolved = Swig_symbol_typedef_reduce(placeholder, Swig_symbol_current());
+  if (!Equal(resolved, placeholder) &&
+      (Len(remaining) > 0 || (!reference && (SwigType_isqualifier(resolved) || SwigType_isarray(resolved) || SwigType_isfunction(resolved))))) {
+    Delete(placeholder);
+    placeholder = resolved;
+  } else {
+    Delete(resolved);
+  }
+
+  if (!reference) {
+    /* Deduction drops the top level cv-qualifiers of the initialiser unless the variable is a reference, so
+     * 'auto x = cg;' with 'cg' declared 'const int' deduces 'int' while 'auto& r = cg;' deduces 'const int'. */
+    SwigType_remove_qualifier(placeholder);
+    /* An array decays to a pointer to its first element unless the variable is a reference, so 'auto p = arr;'
+     * with 'arr' an 'int[4]' deduces 'int *' while 'auto& r = arr;' deduces 'int (&)[4]'. */
+    if (SwigType_isarray(placeholder)) {
+      Delete(SwigType_pop(placeholder));
+      SwigType_add_pointer(placeholder);
+    }
+    /* A function decays to a function pointer, but the name of a function is not deduced from, see
+     * deduce_type_from_value(), and the one declared with a function typedef is no different. */
+    if (SwigType_isfunction(placeholder))
+      matched = 0;
+  }
+
+  while (matched && Len(remaining) > 0) {
+    SwigType *op = SwigType_pop(remaining);
+    /* A cv-qualifier in the declarator, as in the 'auto* const' of 'auto* const p = pg;', qualifies the variable
+     * rather than the placeholder, so there is nothing in the initialiser type to match it against. */
+    if (!SwigType_isqualifier(op)) {
+      SwigType *initialiser_op = SwigType_pop(placeholder);
+      if (!initialiser_op || !Equal(op, initialiser_op))
+        matched = 0;
+      Delete(initialiser_op);
+    }
+    Delete(op);
+  }
+
+  Delete(remaining);
+  if (!matched || Len(placeholder) == 0) {
+    Delete(placeholder);
+    placeholder = 0;
+  }
+  return placeholder;
+}
+
+/* Whether the initialiser 'dtype' is a wide character literal, optionally parenthesised.  Every prefixed character
+   literal reaches the grammar as a wide one, whose value text the grammar writes as 'L'...'' whichever prefix the
+   source spelt it with. */
+static int initialiser_is_wide_character_literal(const struct Define *dtype) {
+  String *unwrapped;
+  const char *text;
+  int is_literal;
+  if (dtype->type != T_WCHAR || !dtype->val || !dtype->stringval)
+    return 0;
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  text = Char(unwrapped ? unwrapped : dtype->val);
+  is_literal = text[0] == 'L' && text[1] == '\'' && text[strlen(text) - 1] == '\'';
+  Delete(unwrapped);
+  return is_literal;
+}
+
 /* Carry the encoding prefix of the string literal 'piece' onto 'literal', the run of adjacent literals it is
    being concatenated onto.  The run makes one literal of the character type a u8, u or U prefix gives it, else an L
    prefix, so it keeps the first such prefix, the 'u8' of both u8"a" u8"b" and R"(a)" u8"b". */
@@ -2571,9 +2797,9 @@ static void append_literal_prefix(String *literal, String *piece) {
     Setmeta(literal, "encodingprefix", prefix);
 }
 
-/* The encoding prefix of the string literal 'stringval' when that prefix gives the literal one of the char8_t,
-   char16_t and char32_t character types, which SWIG has no type for, and 0 when the literal is of char or
-   wchar_t.  Returns the prefix of whichever of a concatenated run of literals carries one. */
+/* The encoding prefix of the string or character literal 'stringval' when that prefix gives the literal one of the
+   char8_t, char16_t and char32_t character types, which SWIG has no type for, and 0 when the literal is of char or
+   wchar_t.  Returns the prefix of whichever of a concatenated run of string literals carries one. */
 static String *unsupported_literal_prefix(String *stringval) {
   String *prefix = Getmeta(stringval, "encodingprefix");
   return prefix && (Strchr(prefix, 'u') || Strchr(prefix, 'U')) ? prefix : 0;
@@ -2608,7 +2834,7 @@ static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, 
   SwigType *type = 0;
   SwigType *initialiser_type;
 
-  if (initialiser_is_string_literal(dtype) && unsupported_literal_prefix(dtype->stringval)) {
+  if ((initialiser_is_string_literal(dtype) || initialiser_is_wide_character_literal(dtype)) && unsupported_literal_prefix(dtype->stringval)) {
     /* The u8, u and U prefixes give a literal one of the char8_t, char16_t and char32_t character types. */
     return 0;
   }
@@ -2620,6 +2846,14 @@ static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, 
     if (type)
       SwigType_add_reference(type);
     return type;
+  }
+  if (!isdecltypeauto && Equal(decl, "r.") && initialiser_is_string_literal(dtype)) {
+    /* A reference binds to the array of characters a string literal is rather than to a pointer it decays to, so
+     * 'auto& s = "text";' declares a 'const char (&)[5]'.  The characters are already const, so a 'const' on the
+     * placeholder adds nothing; a 'volatile' one would qualify them further, which is left undeduced. */
+    if (qualifier && Strstr(qualifier, "volatile"))
+      return 0;
+    return string_literal_type(dtype);
   }
   if (isdecltypeauto && initialiser_is_parenthesised_name(dtype)) {
     /* Likewise 'decltype(auto) r = (object);' declares a reference to the object, which is the type that
@@ -2642,9 +2876,7 @@ static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, 
   }
   if (type && qualifier) {
     /* A cv-qualifier on the declaration replaces the deduced top level cv-qualifiers, so 'const auto &x = cg;' with 'cg' a 'const int' is 'const int &'. */
-    while (SwigType_isqualifier(type))
-      Delete(SwigType_pop(type));
-    SwigType_push(type, qualifier);
+    SwigType_push(SwigType_remove_qualifier(type), qualifier);
   }
   return type;
 }
@@ -2687,19 +2919,27 @@ static void set_auto_variable_types(Node *first, const struct Define *first_dtyp
       dtype.val = Getattr(n, "value");
       dtype.stringval = Getattr(n, "stringval");
       dtype.type = GetInt(n, "initialisertypecode");
+      dtype.newtype = Getattr(n, "initialisernewtype");
     }
     if (!isdecltypeauto)
       collapse_forwarding_reference(Getattr(n, "decl"), &dtype);
     type = auto_variable_type(&dtype, Getattr(n, "decl"), qualifier, isdecltypeauto);
+    if (type && names_type_template_parameter(type)) {
+      /* The argument given for 'T' can have a reference or cv-qualifiers that the variable does not deduce, so
+       * these are removed once instantiated, see cparse_postprocess_expanded_template(). */
+      SetFlag(n, "autodependent");
+    }
     if (type) {
       Setattr(n, "autotype", type);
       if (!declaration_type)
         declaration_type = Copy(type);
       Delete(type);
-    } else if (initialiser_is_string_literal(&dtype)) {
+    } else if (initialiser_is_string_literal(&dtype) || initialiser_is_wide_character_literal(&dtype)) {
       String *prefix = unsupported_literal_prefix(dtype.stringval);
-      if (prefix)
+      if (prefix) {
         Setattr(n, "autoliteralprefix", prefix);
+        Setattr(n, "autoliteralkind", dtype.type == T_WCHAR ? "character" : "string");
+      }
     }
   }
 
@@ -2759,6 +2999,44 @@ static int named_cast_type_code(SwigType *t) {
   return code;
 }
 
+/* The type of the functional cast 't(...)' or 't{...}' when the qualified type 't' names a class, a class template
+   specialisation or a typedef of either, such as the 'Pt' of 'Pt{1, 2}' or the 'std::vector<int>' of
+   'std::vector<int>{1, 2}'.  Returns 0 for anything else, notably a function, as 't(...)' is then a call, and a
+   template SWIG has not seen, which could be a function template. */
+static SwigType *functional_cast_class_type(SwigType *t) {
+  SwigType *reduced;
+  SwigType *prefix;
+  int names_class = 0;
+  if (SwigType_type(t) != T_USER)
+    return 0;
+  reduced = Swig_symbol_typedef_reduce(t, Swig_symbol_current());
+  prefix = SwigType_prefix(reduced);
+  if (Len(prefix) == 0) {
+    Node *n;
+    if (SwigType_istemplate(reduced)) {
+      String *tprefix = SwigType_templateprefix(reduced);
+      n = Swig_symbol_clookup(tprefix, 0);
+      names_class = n && Equal(nodeType(n), "template") && Equal(Getattr(n, "templatetype"), "class");
+      Delete(tprefix);
+    } else {
+      n = Swig_symbol_clookup(reduced, 0);
+      /* A class SWIG has seen only a forward declaration of, such as the 'std::string' of the library's
+       * std_string.i, is complete wherever the cast compiles. */
+      names_class = n && (Equal(nodeType(n), "class") || Equal(nodeType(n), "classforward"));
+    }
+  }
+  Delete(prefix);
+  Delete(reduced);
+  return names_class ? Copy(t) : 0;
+}
+
+/* The type of the functional cast 'type(...)' or 'type{...}', 'qty' being 'type' qualified.  That is 'type' itself
+   for a type template parameter, the 'T(3)' of 'template<class T>', and otherwise the class it names, see
+   functional_cast_class_type().  Returns 0 when there is no such type. */
+static SwigType *functional_cast_type(SwigType *type, SwigType *qty) {
+  return names_type_template_parameter(type) ? Copy(type) : functional_cast_class_type(qty);
+}
+
 /* The initialiser held in the braced initialiser text 'braced', that is the text between the outermost braces
    with any surrounding whitespace removed, so '{ 42 }' gives '42' and '{}' gives an empty string. */
 static String *braced_initialiser_value(String *braced) {
@@ -2768,6 +3046,87 @@ static String *braced_initialiser_value(String *braced) {
   value = NewStringWithSize(Char(braced) + 1, Len(braced) - 2);
   Swig_cparse_trim_whitespace(value);
   return value;
+}
+
+/* The type of a new-expression allocating 'type_id', which is a pointer to it, or for an array to its first element,
+   so 'new int' and 'new int[n]' are both 'int *' and 'new int[n][3]' is 'int (*)[3]'.  Returns 0 for a type-id SWIG
+   cannot build a pointer to, such as one naming a decltype it could not deduce, which is the one way to name the
+   'decltype(auto)' placeholder in a type-id, as in 'new decltype(auto)(x)'. */
+static SwigType *new_expression_type(SwigType *type_id) {
+  SwigType *type;
+  if (SwigType_isvariadic(type_id) || SwigType_isdecltype(type_id))
+    return 0;
+  type = Copy(type_id);
+  if (SwigType_isarray(type))
+    Delete(SwigType_pop(type));
+  SwigType_add_pointer(type);
+  return type;
+}
+
+/* The type of the new-expression 'new auto(x)', optionally cv-qualified by 'qualifier', which deduces the type it
+   allocates from the one expression in 'initializer', the parenthesised or braced text that follows the placeholder,
+   as an 'auto' variable does.  Returns 0 when there is no initialiser or no type can be deduced from it. */
+static SwigType *new_auto_expression_type(String *qualifier, String *initializer) {
+  struct Define dtype = default_dtype;
+  SwigType *decl;
+  SwigType *type;
+  if (!initializer)
+    return 0;
+  dtype.val = braced_initialiser_value(initializer);
+  dtype.type = literal_type_code(dtype.val);
+  decl = NewStringEmpty();
+  type = auto_variable_type(&dtype, decl, qualifier, 0);
+  if (type)
+    SwigType_add_pointer(type);
+  Delete(decl);
+  Delete(dtype.val);
+  return type;
+}
+
+/* The raw text of a new-expression that begins with 'keyword', which is 'new' or '::new', read up to the end of the
+   initialiser the new-expression is, before the parser reads any of it. */
+static String *new_expression_text(const char *keyword) {
+  String *rest = get_raw_text_to_initializer_end();
+  String *text;
+  if (!rest)
+    Exit(EXIT_FAILURE);
+  Swig_cparse_trim_whitespace(rest);
+  text = NewStringf("%s %s", keyword, rest);
+  Delete(rest);
+  return text;
+}
+
+/* The value of a new-expression, 'text' being its raw text and 'newtype' the type parsed for it, or 0 if there is none.
+   'lookahead' is the parser's lookahead token, the token after the new-expression if it has been read, else YYEMPTY.
+
+   The grammar parses only the type-id, reading the placement and the initialiser as raw text, so the rest of the
+   new-expression is checked here.  After an initialiser no token has been read ahead, and anything up to the end of
+   the initialiser, as in 'new int(5) + 1', is skipped.  Without one the token after the type-id has been read ahead,
+   and one that cannot end an initialiser, such as the '+' of 'new int[3] + 1' or the 'auto' of 'new Numeric auto(5)',
+   is dropped and the rest skipped the same way.  Either way the new-expression is only part of the initialiser, or a
+   form the grammar does not parse, and no type is deduced from it. */
+static struct Define new_expression_dtype(String *text, SwigType *newtype, int *lookahead) {
+  struct Define dtype = default_dtype;
+  int dropped = 0;
+  if (*lookahead != YYEMPTY && *lookahead != SEMI && *lookahead != COMMA && *lookahead != RPAREN) {
+    *lookahead = YYEMPTY;
+    dropped = 1;
+  }
+  if (*lookahead == YYEMPTY) {
+    String *rest = skip_to_initializer_end();
+    if (!rest)
+      Exit(EXIT_FAILURE);
+    Swig_cparse_trim_whitespace(rest);
+    if (dropped || Len(rest) > 0) {
+      Delete(newtype);
+      newtype = 0;
+    }
+    Delete(rest);
+  }
+  dtype.type = T_UNKNOWN;
+  dtype.val = text;
+  dtype.newtype = newtype;
+  return dtype;
 }
 
 // Append scanner_ccode to expr.  Some cleaning up of the code may be done.
@@ -3672,11 +4031,12 @@ rename_directive : rename_namewarn declarator idstring SEMI {
 		SwigType *t = $declarator.type;
 		fixname = feature_identifier_fix($declarator.id);
 		if (!Len(t)) t = 0;
+                directive_constraint_check(t, $cpp_const.constraint_node);
 		/* Special declarator check */
 		if (t) {
 		  if ($cpp_const.qualifier) SwigType_push(t,$cpp_const.qualifier);
 		  if (SwigType_isfunction(t)) {
-		    SwigType *decl = SwigType_pop_function(t);
+                    SwigType *decl = directive_decl(SwigType_pop_function(t), $cpp_const.constraint_node);
 		    if (SwigType_ispointer(t)) {
 		      String *nname = NewStringf("*%s",fixname);
 		      if ($rename_namewarn) {
@@ -3755,13 +4115,13 @@ rename_namewarn : RENAME {
                   /* Non-global feature */
 feature_directive : FEATURE LPAREN idstring featattr RPAREN declarator cpp_const stringbracesemi {
                     String *val = $stringbracesemi ? NewString($stringbracesemi) : NewString("1");
-                    new_feature($idstring, val, $featattr, $declarator.id, $declarator.type, $declarator.parms, $cpp_const.qualifier);
+                    new_feature($idstring, val, $featattr, $declarator.id, $declarator.type, $declarator.parms, $cpp_const.qualifier, $cpp_const.constraint_node);
                     $$ = 0;
                     scanner_clear_rename();
                   }
                   | FEATURE LPAREN idstring COMMA stringnum featattr RPAREN declarator cpp_const SEMI {
                     String *val = Len($stringnum) ? $stringnum : 0;
-                    new_feature($idstring, val, $featattr, $declarator.id, $declarator.type, $declarator.parms, $cpp_const.qualifier);
+                    new_feature($idstring, val, $featattr, $declarator.id, $declarator.type, $declarator.parms, $cpp_const.qualifier, $cpp_const.constraint_node);
                     $$ = 0;
                     scanner_clear_rename();
                   }
@@ -3769,13 +4129,13 @@ feature_directive : FEATURE LPAREN idstring featattr RPAREN declarator cpp_const
                   /* Global feature */
                   | FEATURE LPAREN idstring featattr RPAREN stringbracesemi {
                     String *val = $stringbracesemi ? NewString($stringbracesemi) : NewString("1");
-                    new_feature($idstring, val, $featattr, 0, 0, 0, 0);
+                    new_feature($idstring, val, $featattr, 0, 0, 0, 0, 0);
                     $$ = 0;
                     scanner_clear_rename();
                   }
                   | FEATURE LPAREN idstring COMMA stringnum featattr RPAREN SEMI {
                     String *val = Len($stringnum) ? $stringnum : 0;
-                    new_feature($idstring, val, $featattr, 0, 0, 0, 0);
+                    new_feature($idstring, val, $featattr, 0, 0, 0, 0, 0);
                     $$ = 0;
                     scanner_clear_rename();
                   }
@@ -4072,6 +4432,7 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
 
 			  /* Expand the template */
 			  ParmList *temparms = Swig_cparse_template_parms_expand($valparms, primary_template, nn);
+                          set_placeholder_template_argument_types(temparms, Getattr(nnisclass && primary_template ? primary_template : nn, "templateparms"));
 
                           templnode = copy_node(nn);
 			  update_nested_classes(templnode); /* update classes nested within template */
@@ -4522,6 +4883,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
               trailing_rettype_parms = $declarator.parms;
               Delete(trailing_rettype_placeholder_parm);
               trailing_rettype_placeholder_parm = 0;
+              Delete(trailing_rettype_unusable);
+              trailing_rettype_unusable = 0;
              } trailing_rettype {
               trailing_rettype_parms = 0;
              } requires_clause_opt virt_specifier_seq_opt initializer c_decl_tail {
@@ -4529,6 +4892,11 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$,"refqualifier",$cpp_const.refqualifier);
               Setattr($$,"type",$trailing_rettype);
+              if (trailing_rettype_unusable) {
+                Setattr($$, "decltypeunusable", trailing_rettype_unusable);
+                Delete(trailing_rettype_unusable);
+                trailing_rettype_unusable = 0;
+              }
               /* A trailing return type that is itself a placeholder, 'auto f() -> auto' or 'auto f() -> decltype(auto)',
                * still leaves the return type to be deduced from the body.  A placeholder from an abbreviated parameter
                * is not one of those - promote_abbreviated_template() fills it in below. */
@@ -4542,6 +4910,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$,"name",$declarator.id);
 	      Setattr($$,"decl",$declarator.type);
 	      Setattr($$,"parms",$declarator.parms);
+              /* A pure specifier, '= delete' or '= default', as for any other function declaration. */
+              Setattr($$, "value", $initializer.val);
 	      Setattr($$,"throws",$cpp_const.throws);
 	      Setattr($$,"throw",$cpp_const.throwf);
 	      Setattr($$,"noexcept",$cpp_const.nexcept);
@@ -4630,7 +5000,12 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
                 dtype.type = literal_type_code(dtype.val);
                 if (!$auto_type_holder.isdecltypeauto)
                   collapse_forwarding_reference($declarator.type, &dtype);
-                type = auto_variable_type(&dtype, $declarator.type, $auto_type_holder.qualifier, $auto_type_holder.isdecltypeauto);
+                /* A reference binds to the array a string literal is, whose length is not known from the undecoded
+                 * text here, so it is left undeduced rather than deduced as a reference to a pointer. */
+                if ((SwigType_isreference($declarator.type) || SwigType_isrvalue_reference($declarator.type)) && (dtype.type == T_STRING || dtype.type == T_WSTRING))
+                  type = 0;
+                else
+                  type = auto_variable_type(&dtype, $declarator.type, $auto_type_holder.qualifier, $auto_type_holder.isdecltypeauto);
                 if (!type)
                   type = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
                 Setattr($$, "type", type);
@@ -4731,14 +5106,16 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
               The same rule takes a function declarator, which is how the C++20 defaulted comparison operator
               'auto operator<=>(const S&) const = default;' and the deleted function 'auto m() = delete;' are
               parsed.  A cv-qualifier or noexcept-specifier there belongs to the function, not the placeholder. */
-           | storage_class auto_type_holder declarator cpp_const EQUAL definetype auto_decl_tail {
+           | storage_class auto_type_holder declarator cpp_const EQUAL auto_initializer auto_decl_tail {
 	      $$ = new_node("cdecl");
 	      Setattr($$, "storage", $storage_class);
               Setattr($$, "name", $declarator.id);
               Setattr($$, "decl", $declarator.type);
-	      Setattr($$, "value", $definetype.val);
-	      if ($definetype.stringval) Setattr($$, "stringval", $definetype.stringval);
-	      if ($definetype.numval) Setattr($$, "numval", $definetype.numval);
+              Setattr($$, "value", $auto_initializer.val);
+              if ($auto_initializer.stringval)
+                Setattr($$, "stringval", $auto_initializer.stringval);
+              if ($auto_initializer.numval)
+                Setattr($$, "numval", $auto_initializer.numval);
               Setattr($$, "refqualifier", $cpp_const.refqualifier);
               Setattr($$, "throws", $cpp_const.throws);
               Setattr($$, "throw", $cpp_const.throwf);
@@ -4755,7 +5132,7 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
                   Setattr(n, "storage", $storage_class);
                 set_nextSibling($$, $auto_decl_tail);
               }
-              set_auto_variable_types($$, &$definetype, $auto_type_holder.qualifier, $auto_type_holder.conceptid, $auto_type_holder.isdecltypeauto);
+              set_auto_variable_types($$, &$auto_initializer, $auto_type_holder.qualifier, $auto_type_holder.conceptid, $auto_type_holder.isdecltypeauto);
               /* The cv-qualifier is added to the declarator only once the types have been deduced: a function
                * declarator is what says this is a function rather than a variable, and the qualifier hides it. */
               if ($cpp_const.qualifier)
@@ -4858,6 +5235,8 @@ c_decl_list_tail : COMMA declarator cpp_const initializer c_decl_tail[in] {
                    String *typecode = NewStringf("%d", $initializer.type);
                    Setattr($$, "initialisertypecode", typecode);
                    Delete(typecode);
+                   if ($initializer.newtype)
+                     Setattr($$, "initialisernewtype", $initializer.newtype);
                  }
 		 Setattr($$,"throws",$cpp_const.throws);
 		 Setattr($$,"throw",$cpp_const.throwf);
@@ -4925,7 +5304,7 @@ initializer   : def_args
    e.g. 'auto', 'const auto', 'auto const', 'Numeric auto', 'const Numeric auto', 'Numeric auto const'.  AUTO is
    deliberately not an alternative of type_right as it would collide with the declarator that follows the placeholder,
    so the placeholder gets a rule of its own which every use site shares.  The cv-qualifier orderings are equivalent
-   and produce the same type. */
+   and produce the same type.  The C++14 'decltype(auto)' takes a type-constraint too, 'Numeric decltype(auto)'. */
 auto_type_holder : AUTO {
                    $$.qualifier = 0;
                    $$.conceptid = 0;
@@ -4960,6 +5339,12 @@ auto_type_holder : AUTO {
                    Delete($decltype_prefix);
                    $$.qualifier = 0;
                    $$.conceptid = 0;
+                   $$.isdecltypeauto = 1;
+                 }
+                 | idcolon decltype_prefix AUTO RPAREN {
+                   Delete($decltype_prefix);
+                   $$.qualifier = 0;
+                   $$.conceptid = $idcolon;
                    $$.isdecltypeauto = 1;
                  }
                  ;
@@ -6054,6 +6439,13 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
                   $$ = 0; 
 		}
 
+                /* Function template explicit instantiation definition with a trailing return type */
+                | TEMPLATE AUTO idcolon LPAREN parms RPAREN ARROW cpp_alternate_rettype SEMI {
+                  Swig_warning(WARN_PARSE_EXPLICIT_TEMPLATE, cparse_file, cparse_line, "Explicit template instantiation ignored.\n");
+                  Delete($cpp_alternate_rettype);
+                  $$ = 0;
+                }
+
 		/* Class template explicit instantiation declaration (extern template) */
 		| EXTERN TEMPLATE cpptype idcolon {
 		  Swig_warning(WARN_PARSE_EXTERN_TEMPLATE, cparse_file, cparse_line, "Extern template ignored.\n");
@@ -6065,6 +6457,13 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
 			Swig_warning(WARN_PARSE_EXTERN_TEMPLATE, cparse_file, cparse_line, "Extern template ignored.\n");
                   $$ = 0; 
 		}
+
+                /* Function template explicit instantiation declaration with a trailing return type */
+                | EXTERN TEMPLATE AUTO idcolon LPAREN parms RPAREN ARROW cpp_alternate_rettype SEMI {
+                  Swig_warning(WARN_PARSE_EXTERN_TEMPLATE, cparse_file, cparse_line, "Extern template ignored.\n");
+                  Delete($cpp_alternate_rettype);
+                  $$ = 0;
+                }
 		;
 
 cpp_template_possible:  c_decl
@@ -6598,6 +6997,8 @@ cpp_constructor_decl : storage_class type LPAREN parms RPAREN ctor_end {
 		  Setattr($$, "stringval", $ctor_end.stringdefarg);
 		if ($ctor_end.numdefarg)
 		  Setattr($$, "numval", $ctor_end.numdefarg);
+                /* C++20 abbreviated constructor template: any parm typed 'auto' becomes an invented type template parameter. */
+                promote_abbreviated_template($$, 0);
 	      } else {
 		$$ = 0;
               }
@@ -6762,11 +7163,12 @@ cpp_conversion_operator : storage_class CONVERSIONOPERATOR type pointer LPAREN p
 		Delete($CONVERSIONOPERATOR);
 		Delete($storage_class);
               }
-              /* C++14 conversion function with a deduced return type: 'operator auto()' or 'operator decltype(auto)()'.
-               * SWIG cannot deduce the type from the body, so the placeholder is kept as the type and add_symbols()
-               * then reports it the same way as any other function with an undeduced 'auto' return type. */
-              | storage_class CONVERSIONOPERATOR auto_type_holder LPAREN parms RPAREN cpp_vend {
-                SwigType *t = NewStringEmpty();
+              /* C++14 conversion function with a deduced return type: 'operator auto()', 'operator decltype(auto)()',
+               * 'operator const auto&()' or 'operator auto*()'.  SWIG cannot deduce the type from the body, so the
+               * placeholder is kept as the type and add_symbols() then reports it the same way as any other function
+               * with an undeduced 'auto' return type. */
+              | storage_class CONVERSIONOPERATOR auto_type_holder conversion_declarator LPAREN parms RPAREN cpp_vend {
+                SwigType *t = $conversion_declarator;
                 $$ = new_node("cdecl");
                 set_auto_type($$, $auto_type_holder.qualifier, $auto_type_holder.conceptid);
                 SetFlag($$, "autodeducefrombody");
@@ -6785,6 +7187,29 @@ cpp_conversion_operator : storage_class CONVERSIONOPERATOR type pointer LPAREN p
                 Delete(t);
                 Delete($CONVERSIONOPERATOR);
                 Delete($storage_class);
+              }
+              ;
+
+/* The optional ptr-operators following the placeholder in a conversion function with a deduced return type. */
+conversion_declarator : %empty {
+                $$ = NewStringEmpty();
+              }
+              | pointer
+              | AND {
+                $$ = NewStringEmpty();
+                SwigType_add_reference($$);
+              }
+              | LAND {
+                $$ = NewStringEmpty();
+                SwigType_add_rvalue_reference($$);
+              }
+              | pointer AND {
+                $$ = $pointer;
+                SwigType_add_reference($$);
+              }
+              | pointer LAND {
+                $$ = $pointer;
+                SwigType_add_rvalue_reference($$);
               }
               ;
 
@@ -7127,6 +7552,7 @@ valparm        : parm {
 		  Setattr($$,"value",$valexpr.val);
 		  if ($valexpr.stringval) Setattr($$, "stringval", $valexpr.stringval);
 		  if ($valexpr.numval) Setattr($$, "numval", $valexpr.numval);
+                  SetInt($$, "valuetypecode", $valexpr.type);
                }
                ;
 
@@ -7147,20 +7573,113 @@ def_args       : EQUAL definetype {
 		 $$.val = NewString(scanner_ccode);
 		 $$.type = T_UNKNOWN;
 	       }
-               /* A new-expression, which the expression grammar does not parse, so its text is kept as it is. */
-               | EQUAL NEW_KW {
-                 String *code = skip_to_initializer_end();
-                 if (!code) Exit(EXIT_FAILURE);
-                 Swig_cparse_trim_whitespace(code);
-                 $$ = default_dtype;
-                 $$.val = NewStringf("new %s", code);
-                 $$.type = T_UNKNOWN;
-                 Delete(code);
+               | EQUAL new_expression {
+                 $$ = $new_expression;
                }
                | %empty {
 		 $$ = default_dtype;
                  $$.type = T_UNKNOWN;
                }
+               ;
+
+/* A new-expression, 'new' followed by an optional placement, the type-id and an optional initialiser, such as
+   'new int(5)', 'new (buffer) Widget{1, 2}' or 'new double[n]', which gives the type of the pointer it creates.  It is
+   only parsed as the whole of an initialiser or a default argument, and never as an operand within an expression, as
+   in 'new int(5) + 1'.  The type-id is the only part the grammar parses: the placement and the initialiser are skipped
+   over as balanced raw text, and the value is the raw text of the whole new-expression.  A parenthesised type-id, as in
+   'new (int *[3])', reads as a placement with no type-id after it and has no type. */
+new_expression : new_keyword new_type_id new_initializer_opt {
+                   $$ = new_expression_dtype($new_keyword, new_expression_type($new_type_id), &yychar);
+                 }
+               | new_keyword new_placement new_type_id new_initializer_opt {
+                   $$ = new_expression_dtype($new_keyword, new_expression_type($new_type_id), &yychar);
+                 }
+               | new_keyword new_placement new_initializer_opt {
+                   $$ = new_expression_dtype($new_keyword, 0, &yychar);
+                 }
+               /* The C++11 'auto' placeholder, which deduces the type allocated from the initialiser. */
+               | new_keyword AUTO new_initializer_opt {
+                   $$ = new_expression_dtype($new_keyword, new_auto_expression_type(0, $new_initializer_opt), &yychar);
+                 }
+               | new_keyword type_qualifier AUTO new_initializer_opt {
+                   $$ = new_expression_dtype($new_keyword, new_auto_expression_type($type_qualifier, $new_initializer_opt), &yychar);
+                 }
+               ;
+
+/* The 'new' or '::new' that starts a new-expression.  Its value is the raw text of the whole new-expression, read
+   before the parser reads any further. */
+new_keyword    : NEW_KW {
+                   $$ = new_expression_text("new");
+                 }
+               /* The scanner gives a '::' that does not follow a name as NONID DCOLON. */
+               | NONID DCOLON NEW_KW {
+                   $$ = new_expression_text("::new");
+                 }
+               ;
+
+/* The type-id of a new-expression, which is a type followed by any pointer and array declarators but not the
+   parentheses of a function declarator, those being the initialiser. */
+new_type_id    : type
+               | type pointer {
+                   $$ = $type;
+                   SwigType_push($$, $pointer);
+                 }
+               | type new_array_declarator {
+                   $$ = $type;
+                   SwigType_push($$, $new_array_declarator);
+                 }
+               | type pointer new_array_declarator {
+                   $$ = $type;
+                   SwigType_push($$, $pointer);
+                   SwigType_push($$, $new_array_declarator);
+                 }
+               ;
+
+/* The array bounds of a new-expression type-id, the first of which can be any expression, as in 'new int[n][3]'. */
+new_array_declarator : LBRACKET expr RBRACKET {
+                   $$ = NewStringEmpty();
+                   SwigType_add_array($$, $expr.val);
+                 }
+               | LBRACKET RBRACKET {
+                   $$ = NewStringEmpty();
+                   SwigType_add_array($$, "");
+                 }
+               | new_array_declarator[in] LBRACKET expr RBRACKET {
+                   SwigType *bound = NewStringEmpty();
+                   SwigType_add_array(bound, $expr.val);
+                   $$ = $in;
+                   Append($$, bound);
+                   Delete(bound);
+                 }
+               ;
+
+new_placement  : LPAREN {
+                   if (skip_balanced('(', ')') < 0)
+                     Exit(EXIT_FAILURE);
+                   Clear(scanner_ccode);
+                 }
+               ;
+
+new_initializer_opt : LPAREN {
+                   if (skip_balanced('(', ')') < 0)
+                     Exit(EXIT_FAILURE);
+                   $$ = Copy(scanner_ccode);
+                   Clear(scanner_ccode);
+                 }
+               | LBRACE {
+                   if (skip_balanced('{', '}') < 0)
+                     Exit(EXIT_FAILURE);
+                   $$ = Copy(scanner_ccode);
+                   Clear(scanner_ccode);
+                 }
+               | %empty %prec NO_NEW_INITIALIZER {
+                   $$ = 0;
+                 }
+               ;
+
+/* The initialiser of the first variable an 'auto' declaration declares. */
+auto_initializer : definetype
+               | new_expression
                ;
 
 parameter_declarator : declarator def_args {
@@ -7903,6 +8422,7 @@ type_right     : primitive_type
    to tell the two apart, and the captured text would then be missing the first token of the operand. */
 decltype_prefix : DECLTYPE LPAREN {
                  $$ = get_raw_text_balanced('(', ')');
+                 decltype_mentions_parm = 0;
                }
                ;
 
@@ -7911,11 +8431,17 @@ decltype       : decltype_prefix[expr] decltypeexpr {
 		 if ($decltypeexpr) {
 		   $$ = $decltypeexpr;
 		 } else {
-		   $$ = NewStringf("decltype%s", expr);
-		   /* expr includes parentheses but don't include them in the warning message. */
+		   /* expr includes parentheses, which are not part of the expression. */
 		   Delitem(expr, 0);
 		   Delitem(expr, DOH_END);
-		   Swig_warning(WARN_CPP11_DECLTYPE, cparse_file, cparse_line, "Unable to deduce decltype for '%s'.\n", expr);
+		   $$ = SwigType_new_decltype(expr);
+		   if (decltype_mentions_parm) {
+		     /* The declaration is ignored with a warning instead, see trailing_rettype_unusable. */
+		     Delete(trailing_rettype_unusable);
+		     trailing_rettype_unusable = Copy(expr);
+		   } else {
+		     Swig_warning(WARN_CPP11_DECLTYPE, cparse_file, cparse_line, "Unable to deduce decltype for '%s'.\n", expr);
+		   }
 		 }
 		 Delete(expr);
 	       }
@@ -8243,13 +8769,15 @@ etype            : expr {
 /* Arithmetic expressions.  Used for constants, C++ templates, and other cool stuff. */
 
 expr           : valexpr
-               | type {
+               | type %prec EXPR_TYPE {
 		 Node *n;
+		 /* A parameter of a trailing return type being parsed hides anything of the same name outside the function. */
+		 int parm_type_code = trailing_rettype_parm_type_code($type);
 		 $$ = default_dtype;
 		 $$.val = $type;
-		 $$.type = T_UNKNOWN;
+		 $$.type = parm_type_code ? parm_type_code : T_UNKNOWN;
 		 /* Check if value is in scope */
-		 n = Swig_symbol_clookup($type,0);
+		 n = parm_type_code ? 0 : Swig_symbol_clookup($type,0);
 		 if (n) {
                    /* A band-aid for enum values used in expressions. */
                    if (Strcmp(nodeType(n),"enumitem") == 0) {
@@ -8273,6 +8801,8 @@ expr           : valexpr
 exprmem        : idcolon ARROW ID {
 		 $$ = default_dtype;
 		 $$.val = NewStringf("%s->%s", $idcolon, $ID);
+                 /* No type is deduced for a member, but one of a parameter still has to be noted as mentioning it. */
+                 (void)trailing_rettype_parm_type_code($idcolon);
 	       }
                | THIS ARROW ID {
                  $$ = default_dtype;
@@ -8280,19 +8810,24 @@ exprmem        : idcolon ARROW ID {
                }
 	       | exprmem[in] ARROW ID {
 		 $$ = $in;
+		 $$.newtype = 0;
 		 Printf($$.val, "->%s", $ID);
 	       }
 	       | idcolon PERIOD ID {
 		 $$ = default_dtype;
 		 $$.val = NewStringf("%s.%s", $idcolon, $ID);
+                 /* No type is deduced for a member, but one of a parameter still has to be noted as mentioning it. */
+                 (void)trailing_rettype_parm_type_code($idcolon);
 	       }
 	       | exprmem[in] PERIOD ID {
 		 $$ = $in;
+		 $$.newtype = 0;
 		 Printf($$.val, ".%s", $ID);
 	       }
 	       | exprmem[in] LPAREN {
 		 if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
 		 $$ = $in;
+		 $$.newtype = 0;
 		 append_expr_from_scanner($$.val);
 	       }
 	       | type LPAREN {
@@ -8303,6 +8838,8 @@ exprmem        : idcolon ARROW ID {
 		 if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
 
 		 String *qty = Swig_symbol_type_qualify($type, 0);
+		 if (!cast_type_code)
+		   $$.newtype = functional_cast_type($type, qty);
 		 if (SwigType_istemplate(qty)) {
 		   String *nstr = SwigType_namestr(qty);
 		   Delete(qty);
@@ -8320,6 +8857,24 @@ exprmem        : idcolon ARROW ID {
 		 if ($$.type == T_USER) $$.type = T_UNKNOWN;
 		 $$.unary_arg_type = 0;
 
+		 $$.val = qty;
+		 append_expr_from_scanner($$.val);
+	       }
+	       /* The C++11 functional cast with a braced initialiser, such as 'long{3}' or 'Pt{1, 2}'.  Unlike the
+		* parenthesised form it is never a function call. */
+	       | type LBRACE {
+		 String *qty;
+		 if (skip_balanced('{', '}') < 0) Exit(EXIT_FAILURE);
+		 $$ = default_dtype;
+		 qty = Swig_symbol_type_qualify($type, 0);
+		 $$.newtype = functional_cast_type($type, qty);
+		 if (SwigType_istemplate(qty)) {
+		   String *nstr = SwigType_namestr(qty);
+		   Delete(qty);
+		   qty = nstr;
+		 }
+		 $$.type = SwigType_type(qty);
+		 if ($$.type == T_USER) $$.type = T_UNKNOWN;
 		 $$.val = qty;
 		 append_expr_from_scanner($$.val);
 	       }
@@ -8376,7 +8931,8 @@ constraint_primary : idcolon {
                      * 'LPAREN constraint RPAREN' and an expression alternative.
                      * The captured text retains its surrounding parens. */
                     String *captured;
-                    if (skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
+                    if (skip_balanced('(', ')') < 0)
+                     Exit(EXIT_FAILURE);
                     captured = Copy(scanner_ccode);
                     $$ = Constraint_new_atom("expression");
                     Setattr($$, "value", captured);
@@ -8423,7 +8979,8 @@ requirement_parameter_list_opt : LPAREN parms RPAREN {
                ;
 
 requirement_body : LBRACE {
-                    if (skip_balanced('{', '}') < 0) Exit(EXIT_FAILURE);
+                    if (skip_balanced('{', '}') < 0)
+                     Exit(EXIT_FAILURE);
                     $$ = parse_requirement_seq(scanner_ccode);
                  }
                ;

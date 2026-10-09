@@ -82,3 +82,17 @@ swig_check(deref(cvar.array_ref), 1)
 # Writing through the reference writes the array it is bound to.
 cvar.array_ref = cvar.other_array
 swig_check(deref(cvar.int_array), 10)
+
+# The address of a non-static member is a pointer to member, the address of a static member a plain pointer.
+swig_check(use_member_ptr(cvar.pt_instance, cvar.member_ptr), 5)
+swig_check(use_member_ptr(cvar.pt_instance, cvar.member_ptr_decltype), 5)
+swig_check(use_member_fn_ptr(cvar.pt_instance, cvar.member_fn_ptr), 6)
+swig_check(call_fn0(cvar.static_fn_ptr), 2)
+swig_check(deref(cvar.static_var_ptr), 3)
+
+# A reference bound to a string literal is a reference to the array, wrapped as the string it holds.
+swig_check(cvar.ref_string, "text")
+swig_check(cvar.fwd_string, "text")
+swig_check(cvar.cref_string, "text")
+swig_check(cvar.cref_post_string, "text")
+swig_check(isinstance(cvar.ref_string_wide, str), False)
