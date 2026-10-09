@@ -469,6 +469,12 @@ static int classify_template_param_type(const SwigType *type) {
     Delete(probe);
     return TPC_KEEP;
   }
+  /* A type named with the 'struct', 'union' or 'class' keyword, such as the 'struct Point' of 'template<struct Point P>',
+   * is a class, never a concept, which the lookup below would not find under that name. */
+  if (Strncmp(probe, "struct ", 7) == 0 || Strncmp(probe, "union ", 6) == 0 || Strncmp(probe, "class ", 6) == 0) {
+    Delete(probe);
+    return TPC_KEEP;
+  }
   /* For a template-id concept-id like 'Pair<(int)>' or 'std::convertible_to<(int)>'
    * the concept declaration is registered under the bare template prefix.  Look that
    * up; for a probe that is not a template-id the prefix is the probe itself. */
@@ -2202,6 +2208,9 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
    whether the name is a type. */
 %precedence LBRACKET
 %precedence NAME_AS_TYPE
+/* The '=' after 'class T' or 'typename T' in a template parameter list starts the type-id default of a type template
+   parameter, see templateparameter, so the 'T' is not reduced as the name of a type for a parameter of type 'class T'. */
+%precedence EQUAL
 %token DCOLON
 
 %type <node>     program interface declaration swig_directive ;
@@ -2246,7 +2255,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <node>     base_specifier;
 %type <intvalue> variadic_opt;
 %type <type>     type rawtype qualified_type type_right keyword_type anon_bitfield_type decltype cpp_alternate_rettype explicit_instantiation_rettype trailing_rettype;
-%type <type>     array_type_id array_element_type;
+%type <type>     array_type_id array_element_type type_id type_id_default;
 %type <group>    decltype_prefix;
 %type <type>     conversion_declarator;
 %type <str>      noexcept_specifier_opt;
@@ -3411,17 +3420,17 @@ static void add_array_from_scanner(SwigType *type) {
   Delete(bound);
 }
 
-/* Decode the UTF-8 'text' that the scanner stores for a wide character literal, returning the code point of
-   its single character, or -1 if 'text' is not a single character. A hexadecimal or octal escape sequence in
-   the literal is encoded as UTF-8 by put_escape_value() in scanner.c, while a character written as itself is
-   copied unchanged from the source file, so it is UTF-8 only in a UTF-8 source file. Either way, an ASCII
-   character is a single char. A code point is the number Unicode assigns to a character and is the value of a
-   wide character literal holding it. For example:
+/* Decode the UTF-8 'text' that the scanner stores for a wide character literal, returning the code point of its single
+   character, or -1 if 'text' is not a single character. A hexadecimal or octal escape sequence or a universal
+   character name in the literal is encoded as UTF-8 by put_escape_value() in scanner.c, while a character written as
+   itself is copied unchanged from the source file, so it is UTF-8 only in a UTF-8 source file. Either way, an ASCII
+   character is a single char. A code point is the number Unicode assigns to a character and is the value of a wide
+   character literal holding it. For example:
 
-     Literal                              'text' (UTF-8 bytes)   Returns
-     L'A' or L'\x41'                      41                     0x41
-     L'\xF1' or the n with tilde itself   C3 B1                  0xF1
-     L'\x263A' or the smiley face itself  E2 98 BA               0x263A
+     Literal                                         'text' (UTF-8 bytes)   Returns
+     L'A', L'\x41' or L'\u0041'                      41                     0x41
+     L'\xF1', L'\u00F1' or the n with tilde itself   C3 B1                  0xF1
+     L'\x263A', L'\u263A' or the smiley face itself  E2 98 BA               0x263A
 */
 static long wide_char_code_point(String *text) {
   const unsigned char *s = (const unsigned char *)Char(text);
@@ -6816,14 +6825,44 @@ template_parms_builder : templateparameter {
 		  }
 		  ;
 
-templateparameter : templcpptype def_args {
+/* The default of a type template parameter is a type-id, such as 'int S::*' or 'int (*)(int)', which def_args cannot parse
+   as an expression.  A named one is told apart from 'parm' by the precedence of EQUAL, 'parm' still matching 'class T'. */
+templateparameter : templcpptype type_id_default {
 		    $$ = NewParmWithoutFileLineInfo($templcpptype, 0);
 		    Setfile($$, cparse_file);
 		    Setline($$, cparse_line);
-		    Setattr($$, "value", $def_args.val);
-		    if ($def_args.stringval) Setattr($$, "stringval", $def_args.stringval);
-		    if ($def_args.numval) Setattr($$, "numval", $def_args.numval);
+                    Setattr($$, "value", $type_id_default);
 		  }
+                  | cpptype identifier EQUAL type_id {
+                    if (Equal($cpptype, "struct") || Equal($cpptype, "union")) {
+                      /* Not a type parameter but an unnamed non-type parameter of class type, such as 'struct S = s',
+                         whose default value has been parsed as a type-id */
+                      String *type = NewStringf("%s %s", $cpptype, $identifier);
+                      String *value = SwigType_str($type_id, 0);
+                      $$ = NewParmWithoutFileLineInfo(type, 0);
+                      Setattr($$, "value", value);
+                      Delete(value);
+                      Delete(type);
+                    } else {
+                      $$ = NewParmWithoutFileLineInfo($cpptype, $identifier);
+                      Setattr($$, "value", $type_id);
+                    }
+                    Setfile($$, cparse_file);
+                    Setline($$, cparse_line);
+                  }
+                  | cpptype identifier EQUAL type LBRACE {
+                    /* An unnamed non-type parameter of class type with a braced default, such as 'struct S = S{}' */
+                    String *type = NewStringf("%s %s", $cpptype, $identifier);
+                    String *value = SwigType_str($type, 0);
+                    if (skip_balanced('{', '}') < 0) Exit(EXIT_FAILURE);
+                    append_expr_from_scanner(value);
+                    $$ = NewParmWithoutFileLineInfo(type, 0);
+                    Setfile($$, cparse_file);
+                    Setline($$, cparse_line);
+                    Setattr($$, "value", value);
+                    Delete(value);
+                    Delete(type);
+                  }
 		  | TEMPLATE LESSTHAN template_parms GREATERTHAN cpptype idcolon def_args {
 		    $$ = NewParmWithoutFileLineInfo(NewStringf("template< %s > %s %s", ParmList_str_defaultargs($template_parms), $cpptype, $idcolon), $idcolon);
 		    Setfile($$, cparse_file);
@@ -7835,7 +7874,7 @@ def_args       : EQUAL definetype {
                  $$.type = T_UNKNOWN;
                }
                | EQUAL expr type_id_pointer {
-                 /* A pointer or reference type-id, such as the 'int *' default of 'template<class T = int *>', with the
+                 /* A pointer or reference type-id, such as the 'int *' default of 'template<Concept T = int *>', with the
                     base type parsed as an expression */
                  $$ = default_dtype;
                  $$.val = Copy($expr.val);
@@ -8796,7 +8835,21 @@ keyword_type   : primitive_type
                | decltype
                ;
 
-/* The type-id of an array type, as in 'template<class T = int[2]>', where the bounds are skipped as text.  A plain name
+/* A type followed by an optional abstract declarator, such as 'int', 'int S::*' or 'int (*)(int)'. */
+type_id        : type
+               | type abstract_declarator {
+                 $$ = $type;
+                 SwigType_push($$, $abstract_declarator.type);
+                 Delete($abstract_declarator.type);
+               }
+               ;
+
+/* The optional default of an unnamed type template parameter. */
+type_id_default : EQUAL type_id { $$ = $type_id; }
+               | %empty { $$ = 0; }
+               ;
+
+/* The type-id of an array type, as in 'template<Concept T = int[2]>', where the bounds are skipped as text.  A plain name
    followed by '[' is a subscript instead, which gives 'T[3]' the same text. */
 array_type_id  : array_element_type LBRACKET {
                  if (skip_balanced('[', ']') < 0) Exit(EXIT_FAILURE);
@@ -10439,7 +10492,7 @@ idcolontail    : DCOLON idtemplatetemplate idcolontail[in] {
                ;
 
 
-idtemplate    : identifier {
+idtemplate    : identifier %prec NAME_AS_TYPE {
 		$$ = NewString($identifier);
 	      }
 	      | identifier less_valparms_greater {

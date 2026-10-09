@@ -7,6 +7,29 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-07: olly
+	    [Guile] #3194 The default "procdoc" format is now "plain" (which
+	    works with Guile 1.4.1 and later), and the old "guile-1.4" format
+	    is no longer supported.
+
+2026-10-04: wsfulton
+            Fix a named non-type template parameter of class type introduced with the 'struct',
+            'union' or 'class' keyword, which was taken to be a type parameter constrained by a
+            C++20 concept of that name, so overloading its template with one taking a type
+            parameter made every instantiation an "Ambiguous template instantiation" error:
+
+              template<typename T> int kind();
+              template<struct Point P> int kind();
+              %template(kind_value) kind<origin>;
+
+2026-10-03: wsfulton
+            Fix a universal character name, such as \u263A or \U0001F600, in a character literal or
+            a narrow string literal, which was kept as the text \u263A, giving the wrong value in
+            generated code, such as for a constant or default argument:
+
+              #define SMILE L'\u263A'
+              int f(wchar_t c = L'\u263A');
+
 2026-10-03: olly
 	    [Guile] Guile >= 2.0 is now required, since we haven't been testing
 	    with Guile 1.x for approaching 5 years.  Some internal compatibility
@@ -15,6 +38,15 @@ Version 4.6.0 (in progress)
 
 	    * Replace `swig_guile_proc` with `scm_t_subr`
 	    * Replace `guile_destructor` with `swig_guile_destructor`
+
+2026-10-02: wsfulton
+            Fix a pointer to member type-id used as the default of a template type parameter
+            declared with class or typename, which was a syntax error, and a function pointer or
+            other type-id with a parenthesised declarator, which was wrapped by code that did not
+            compile, such as:
+
+              template<class T = int S::*> struct P {...};
+              template<class T = int (*)(int)> struct Q {...};
 
 2026-10-02: wsfulton
             Fix the line numbers in warnings and errors when a macro passes on a multiline macro
