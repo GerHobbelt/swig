@@ -48,3 +48,37 @@ swig_check(cvar.global_int, 20)
 
 # A reference to const wraps by value and is live.
 swig_check(cvar.cref_from_cref, 20)
+
+# A cv-qualifier on the declaration is not added to the one deduced from a const initialiser, so the
+# deduced type is 'const int' and not 'const const int'.
+swig_check(cvar.cref_from_cint, 7)
+swig_check(deref(cvar.cptr_from_cint), 7)
+try:
+    cvar.cptr_from_cint = 42
+    raise RuntimeError("setting cptr_from_cint from an int should raise a TypeError")
+except TypeError as e:
+    swig_assert("int const *" in str(e), str(e))
+
+# A forwarding reference bound to an lvalue is an lvalue reference, so it wraps as a pointer
+# to the live object; bound to a literal it is an rvalue reference bound to a temporary.
+swig_check(deref(cvar.fwd_lvalue), 20)
+swig_check(deref(cvar.fwd_lvalue_ref), 20)
+swig_check(deref(cvar.fwd_rvalue), 42)
+
+# An array initialiser decays to a pointer to its first element.
+swig_check(deref(cvar.array_decay), 1)
+swig_check(deref(cvar.array_decay_ptr), 1)
+swig_check(deref(cvar.carray_decay), 5)
+
+# Being a pointer, assigning to it rebinds it and leaves the array it was initialised from alone.
+cvar.array_decay = cvar.other_array
+swig_check(deref(cvar.array_decay), 10)
+swig_check(deref(cvar.int_array), 1)
+
+# auto& binds to the array instead, so it keeps the array type, wrapped as the array itself.
+swig_check(array_first(int_array_address()), 1)
+swig_check(deref(cvar.array_ref), 1)
+
+# Writing through the reference writes the array it is bound to.
+cvar.array_ref = cvar.other_array
+swig_check(deref(cvar.int_array), 10)

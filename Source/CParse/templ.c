@@ -129,8 +129,14 @@ static void cparse_template_expand(Node *templnode, Node *n, String *tname, Stri
   if (!n)
     return;
   nodeType = nodeType(n);
-  if (Getattr(n, "error"))
+  if (Getattr(n, "error")) {
+    /* A redeclaration already reported as a conflict is not expanded, except for its constraint, so that when the
+     * conflict is found again in the instantiation the two constraints are compared with the same template arguments. */
+    Node *cs = Getattr(n, "constraint");
+    if (cs)
+      cparse_template_expand(templnode, cs, tname, rname, templateargs, patchlist, typelist, cpatchlist, unexpanded_variadic_parm, expanded_variadic_parms);
     return;
+  }
 
   if (Equal(nodeType, "template")) {
     /* Change the node type back to normal */
@@ -820,6 +826,40 @@ static int abbreviated_pack_is_not_last(Node *n, String *name) {
 }
 
 /* -----------------------------------------------------------------------------
+ * rebuild_abbreviated_decl()
+ *
+ * A C++20 abbreviated function template is written with 'auto' where an explicitly
+ * written template names a template parameter, so its declarator holds the placeholder
+ * while its parms hold the invented type template parameters.  Rebuild the declarator's
+ * parameter list from the parms so that template expansion has something to substitute
+ * in it, as it does for an explicitly written template: 'f(auto).' becomes
+ * 'f(__dummy_auto_0__).' and expands to 'f(int).' rather than staying 'f(auto).'.
+ *
+ * Only the node being instantiated is rebuilt.  The template declaration keeps the
+ * declarator as written, which is what a %rename, %ignore or %feature declarator spelt
+ * with 'auto' matches - the invented name is not something a user can write.
+ * ----------------------------------------------------------------------------- */
+
+static void rebuild_abbreviated_decl(Node *n) {
+  ParmList *parms = Getattr(n, "parms");
+  SwigType *decl = Getattr(n, "decl");
+  Parm *tp;
+  int abbreviated = 0;
+  for (tp = Getattr(n, "templateparms"); tp && !abbreviated; tp = nextSibling(tp))
+    abbreviated = GetFlag(tp, "abbreviated_auto");
+  if (abbreviated && parms && SwigType_isfunction(decl)) {
+    SwigType *newdecl = Copy(decl);
+    SwigType *qualifiers = SwigType_pop_function_qualifiers(newdecl);
+    Delete(SwigType_pop(newdecl));
+    SwigType_add_function(newdecl, parms);
+    SwigType_push(newdecl, qualifiers);
+    Setattr(n, "decl", newdecl);
+    Delete(qualifiers);
+    Delete(newdecl);
+  }
+}
+
+/* -----------------------------------------------------------------------------
  * Swig_cparse_template_expand()
  * ----------------------------------------------------------------------------- */
 
@@ -836,6 +876,8 @@ int Swig_cparse_template_expand(Node *n, String *rname, ParmList *tparms, Symtab
   patchlist = NewList();  /* List of String * ("name" and "value" attributes) */
   cpatchlist = NewList(); /* List of String * (code) */
   typelist = NewList();   /* List of SwigType * types */
+
+  rebuild_abbreviated_decl(n);
 
   templateargs = NewStringEmpty();
   /* Drop from the emitted C++ template-argument list every argument the compiler deduces for itself.  The
@@ -1802,20 +1844,16 @@ static String *instantiated_function_signature(Node *n, ParmList *instantiated_p
 }
 
 /* -----------------------------------------------------------------------------
- * template_constraints_str()
+ * template_constraints_display_str()
  *
  * Render every constraint attached to function template 'n' - the requires-clause on
  * the template itself and the type-constraint on each template parameter, which is
- * where a C++20 abbreviated 'Concept auto' parameter puts it.
- *
- * With display false the result is a positional key for comparing two overloads: an
- * unconstrained template parameter contributes an empty entry, so a constrained and
- * an unconstrained overload never compare equal, and the same concept on different
- * parameters compares unequal too.  With display true the result is the constraint
- * text for a diagnostic, with the empty entries left out.
+ * where a C++20 abbreviated 'Concept auto' parameter puts it - as constraint text for
+ * a diagnostic.  Constraint_signature_str() is the equivalent for comparing two
+ * declarations.
  * ----------------------------------------------------------------------------- */
 
-static String *template_constraints_str(Node *n, int display) {
+static String *template_constraints_display_str(Node *n) {
   String *out = NewStringEmpty();
   Node *constraint = Getattr(n, "constraint");
   Parm *tp;
@@ -1824,21 +1862,17 @@ static String *template_constraints_str(Node *n, int display) {
     Printf(out, "%s", s);
     Delete(s);
   }
-  if (!display)
-    Append(out, ";");
   for (tp = Getattr(n, "templateparms"); tp; tp = nextSibling(tp)) {
     Node *tconstraint = Getattr(tp, "constraint");
     if (tconstraint) {
       String *s = Constraint_str(tconstraint);
-      if (display && Len(out) > 0)
+      if (Len(out) > 0)
         Append(out, " && ");
       Printf(out, "%s", s);
       Delete(s);
     }
-    if (!display)
-      Append(out, ";");
   }
-  if (display && Len(out) == 0)
+  if (Len(out) == 0)
     Append(out, "no constraint");
   return out;
 }
@@ -1889,12 +1923,12 @@ static int check_constrained_overloads(List *matches, String *name, ParmList *in
     Node *ni = Getitem(matches, i);
     String *sigi = instantiated_function_signature(ni, instantiated_parms, 1);
     String *writteni = instantiated_function_signature(ni, instantiated_parms, 0);
-    String *coni = template_constraints_str(ni, 0);
+    String *coni = Constraint_signature_str(ni);
     for (j = i + 1; j < len && !reported; j++) {
       Node *nj = Getitem(matches, j);
       String *sigj = instantiated_function_signature(nj, instantiated_parms, 1);
       String *writtenj = instantiated_function_signature(nj, instantiated_parms, 0);
-      String *conj = template_constraints_str(nj, 0);
+      String *conj = Constraint_signature_str(nj);
       int constraints_differ = !Equal(coni, conj);
       if (Equal(sigi, sigj) && (constraints_differ || (!Equal(writteni, writtenj) && !same_instantiated_return_type(ni, nj, instantiated_parms)))) {
         String *tname = Copy(name);
@@ -1902,8 +1936,8 @@ static int check_constrained_overloads(List *matches, String *name, ParmList *in
         SwigType_add_template(tname, instantiated_parms);
         namestr = SwigType_namestr(tname);
         if (constraints_differ) {
-          String *displayi = template_constraints_str(ni, 1);
-          String *displayj = template_constraints_str(nj, 1);
+          String *displayi = template_constraints_display_str(ni);
+          String *displayj = template_constraints_display_str(nj);
           Swig_error(cparse_file,
                      cparse_line,
                      "Ambiguous template instantiation of '%s'. Overloaded declarations of '%s' with '%s' and '%s' instantiate to the same "
@@ -1935,6 +1969,61 @@ static int check_constrained_overloads(List *matches, String *name, ParmList *in
     Delete(coni);
   }
   return reported;
+}
+
+/* -----------------------------------------------------------------------------
+ * collect_function_template_matches()
+ *
+ * Append to 'matches' each function template declaration of 'name' in the C symbol
+ * table chain starting at 'firstn' whose template parameter list can take
+ * 'instantiated_parms', and mark it for instantiation.  Only template parameters are
+ * matched, not function parameters, as %template instantiation gives no function
+ * parameters.
+ *
+ * 'variadic' selects the templates with a parameter pack rather than those without,
+ * and 'ignored' those %ignore has kept out of the target language.  The chain walked
+ * is the C symbol table one, which holds every declaration of the name: the target
+ * language chain leaves ignored declarations out, so an ignored overload appearing
+ * first would hide the overloads that are still to be wrapped.
+ * ----------------------------------------------------------------------------- */
+
+static int already_matched(List *matches, Node *n) {
+  String *decl = Getattr(n, "decl");
+  String *constraints = Constraint_signature_str(n);
+  int matched = 0;
+  Iterator mi;
+  for (mi = First(matches); mi.item && !matched; mi = Next(mi)) {
+    String *mconstraints = Constraint_signature_str(mi.item);
+    matched = Equal(decl, Getattr(mi.item, "decl")) && Equal(constraints, mconstraints);
+    Delete(mconstraints);
+  }
+  Delete(constraints);
+  return matched;
+}
+
+static void collect_function_template_matches(Node *firstn, String *name, ParmList *instantiated_parms, int variadic, int ignored, List *matches) {
+  Node *n;
+  for (n = firstn; n; n = Getattr(n, "csym:nextSibling")) {
+    ParmList *tparmsfound;
+    if (!Equal(nodeType(n), "template"))
+      continue;
+    if ((GetFlag(n, "feature:ignore") != 0) != (ignored != 0))
+      continue;
+    tparmsfound = Getattr(n, "templateparms");
+    if ((ParmList_find_variadic_parm(tparmsfound, NULL) != 0) != (variadic != 0))
+      continue;
+    if (variadic ? ParmList_len(instantiated_parms) < ParmList_len(tparmsfound) - 1 : ParmList_len(instantiated_parms) != ParmList_len(tparmsfound))
+      continue;
+    /* A friend declaration and the definition it refers to are the same function template, so the chain
+     * holds two nodes for it and only the first is instantiated. */
+    if (already_matched(matches, n))
+      continue;
+    if (template_debug) {
+      Printf(stdout, "    found: template <%s> '%s' (%s)\n", ParmList_str_defaultargs(tparmsfound), name, ParmList_str_defaultargs(Getattr(n, "parms")));
+    }
+    SetFlag(n, "instantiate");
+    Append(matches, n);
+  }
 }
 
 /* -----------------------------------------------------------------------------
@@ -1994,63 +2083,20 @@ Node *Swig_cparse_template_locate(String *name, Parm *instantiated_parms, String
       }
 
       firstn = Swig_symbol_clookup_local(name, 0);
-      n = firstn;
-      /* First look for all overloaded functions (non-variadic) template matches.
-       * Looking for all template parameter matches only (not function parameter matches)
-       * as %template instantiation uses template parameters without any function parameters. */
-      while (n) {
-        if (Strcmp(nodeType(n), "template") == 0) {
-          Parm *tparmsfound = Getattr(n, "templateparms");
-          if (!ParmList_find_variadic_parm(tparmsfound, NULL)) {
-            if (ParmList_len(instantiated_parms) == ParmList_len(tparmsfound)) {
-              /* successful match */
-              if (template_debug) {
-                Printf(stdout,
-                       "    found: template <%s> '%s' (%s)\n",
-                       ParmList_str_defaultargs(Getattr(n, "templateparms")),
-                       name,
-                       ParmList_str_defaultargs(Getattr(n, "parms")));
-              }
-              SetFlag(n, "instantiate");
-              Append(matches, n);
-              if (!match)
-                match = n; /* first match */
-            }
-          }
+      /* Look for all the overloaded function template matches.  Variadic templates are only considered when
+       * there are no non-variadic matches; the variadic parm may sit anywhere in the templateparms list, as
+       * C++20 [dcl.fct]/19 appends invented type template parameters (from abbreviated 'auto' parameters)
+       * after the explicit list, which can leave the pack in the middle.  Declarations %ignore has excluded
+       * are considered last, so that ignoring one overload leaves the others instantiable. */
+      {
+        int ignored;
+        for (ignored = 0; ignored < 2 && Len(matches) == 0; ignored++) {
+          collect_function_template_matches(firstn, name, instantiated_parms, 0, ignored, matches);
+          if (Len(matches) == 0)
+            collect_function_template_matches(firstn, name, instantiated_parms, 1, ignored, matches);
         }
-        /* repeat to find all matches with correct number of templated parameters */
-        n = Getattr(n, "sym:nextSibling");
-      }
-
-      /* Only consider variadic templates if there are no non-variadic template matches.
-       * The variadic parm may sit anywhere in the templateparms list - C++20 [dcl.fct]/19
-       * appends invented type template parameters (from abbreviated 'auto' parameters)
-       * after the explicit list, which can leave the pack in the middle. */
-      if (!match) {
-        n = firstn;
-        while (n) {
-          if (Strcmp(nodeType(n), "template") == 0) {
-            Parm *tparmsfound = Getattr(n, "templateparms");
-            if (ParmList_find_variadic_parm(tparmsfound, NULL)) {
-              if (ParmList_len(instantiated_parms) >= ParmList_len(tparmsfound) - 1) {
-                /* successful variadic match */
-                if (template_debug) {
-                  Printf(stdout,
-                         "    found: template <%s> '%s' (%s)\n",
-                         ParmList_str_defaultargs(Getattr(n, "templateparms")),
-                         name,
-                         ParmList_str_defaultargs(Getattr(n, "parms")));
-                }
-                SetFlag(n, "instantiate");
-                Append(matches, n);
-                if (!match)
-                  match = n; /* first match */
-              }
-            }
-          }
-          /* repeat to find all matches with correct number of templated parameters */
-          n = Getattr(n, "sym:nextSibling");
-        }
+        if (Len(matches) > 0)
+          match = Getitem(matches, 0);
       }
 
       if (!match) {

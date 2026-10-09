@@ -326,6 +326,7 @@ extern void Swig_obligatory_macros(String *f_runtime, const char *language);
 extern void Swig_banner(File *f);
 extern void Swig_banner_target_lang(File *f, const_String_or_char_ptr commentchar);
 extern String *Swig_strip_c_comments(const String *s);
+extern String *Swig_squeeze_c_whitespace(const String *s);
 extern String *Swig_new_subdirectory(String *basedirectory, String *subdirectory);
 extern void Swig_filename_correct(String *filename);
 extern String *Swig_filename_escape(String *filename);
@@ -454,6 +455,9 @@ extern Node *Constraint_new_requires_expression(void);
 extern Node *Constraint_new_requirement(const_String_or_char_ptr kind);
 extern Node *Constraint_combine(const_String_or_char_ptr op, Node *lhs, Node *rhs);
 extern String *Constraint_str(Node *n);
+extern String *Constraint_signature_str(Node *n);
+extern int Constraint_signatures_equal(Node *a, Node *b);
+extern int Constraint_differently_constrained(Node *a, Node *b);
 
 /* hacks defined in C++ ! */
 extern int Swig_director_mode(void);

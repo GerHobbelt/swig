@@ -19,13 +19,23 @@
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) int_ref;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) ref_from_ref;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) ptr_from_ref;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) fwd_lvalue;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) fwd_lvalue_ref;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) fwd_rvalue;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) array_decay;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) array_decay_ptr;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) carray_decay;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) cptr_from_cint;
 
 #if defined(SWIGC)
-// TODO: Fix the experimental C backend emitting 'int &&**' for an rvalue reference variable.
-%ignore rref_var;
 // TODO: Fix the experimental C backend emitting 'int (*)(int)*' for a function pointer.
 %ignore call_fn;
 %ignore fn_ptr;
+// TODO: Fix the experimental C backend emitting 'int [4]*' for an array variable and 'int (*)[4]*'
+// for a pointer to an array.
+%ignore array_ref;
+%ignore array_first;
+%ignore int_array_address;
 #endif
 
 %inline %{
@@ -37,6 +47,7 @@ int global_fn(int x) { return x + 1; }
 int deref(int *p) { return *p; }
 int deref2(int **p) { return **p; }
 int call_fn(int (*fn)(int), int x) { return fn(x); }
+int array_first(int (*p)[4]) { return (*p)[0]; }
 
 // auto& - lvalue reference to the deduced type.
 auto& ref_var = global_int;
@@ -89,4 +100,29 @@ auto& ref_from_ref = int_ref;        // int &
 auto* ptr_from_ref = &int_ref;       // int *
 auto from_cref = cint_ref;           // int
 auto& cref_from_cref = cint_ref;     // const int &
+
+const int cint = 7;
+
+// A cv-qualifier on the declaration is the deduced type's own cv-qualifier rather than an addition to one
+// deduced from a const initialiser.
+const auto& cref_from_cint = cint;   // const int &
+const auto* cptr_from_cint = &cint;  // const int *
+
+// auto&& is a forwarding reference, so it is an lvalue reference when the initialiser is an lvalue
+// and an rvalue reference when it is not.
+auto&& fwd_lvalue = global_int;      // int &
+auto&& fwd_lvalue_ref = int_ref;     // int &
+auto&& fwd_rvalue = 42;              // int &&
+
+int int_array[4] = {1, 2, 3, 4};
+int other_array[4] = {10, 20, 30, 40};
+const int cint_array[3] = {5, 6, 7};
+
+int (*int_array_address())[4] { return &int_array; }
+
+// An array initialiser decays to a pointer to its first element, unless the variable is a reference.
+auto array_decay = int_array;        // int *
+auto* array_decay_ptr = int_array;   // int *
+auto carray_decay = cint_array;      // const int *
+auto& array_ref = int_array;         // int (&)[4], wrapped as int [4]
 %}

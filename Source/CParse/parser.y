@@ -891,6 +891,9 @@ static void add_symbols(Node *n) {
               Swig_warning(WARN_CPP14_AUTO, Getfile(n), Getline(n), "Unable to deduce auto return type for '%s' without a trailing return type (ignored).\n",
                   Swig_name_decl(n));
             }
+          } else if (GetFlag(n, "autoarrayreference")) {
+            Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to wrap variable '%s' deduced as a reference to an array of characters (ignored).\n",
+                Swig_name_decl(n));
           } else if (value) {
             Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' from initialiser '%s' (ignored).\n",
                 Swig_name_decl(n), value);
@@ -2158,7 +2161,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <dtype>    initializer cpp_const exception_specification cv_ref_qualifier qualifiers_exception_specification;
 %type <str>      storage_class;
 %type <intvalue> storage_class_raw storage_class_list;
-%type <pl>       parms rawparms varargs_parms ;
+%type <pl>       parms fn_parms rawparms varargs_parms ;
 %type <p>        parm_no_dox parm valparm valparms;
 %type <pbuilder> valparms_builder;
 %type <p>        typemap_parm tm_list;
@@ -2356,6 +2359,61 @@ static SwigType *deduce_type(const struct Define *dtype, int unwrap_parentheses)
   return deduced;
 }
 
+/* Whether 'type' names an enumeration */
+static int type_names_enum(const SwigType *type) {
+  SwigType *base = SwigType_base(type);
+  Node *n = Swig_symbol_clookup_resolve_typedef(base, 0);
+  int names_enum = n && Equal(nodeType(n), "enum");
+  Delete(base);
+  return names_enum;
+}
+
+/* The type 'decltype' names for a parenthesised id-expression such as the '(gp)' of 'decltype((gp))'.  Being an
+   lvalue it names an lvalue reference to the type the name was declared with, where the unparenthesised name
+   names that type on its own.  Returns 0 when the expression is not the name of a variable, leaving the caller to
+   work the type out from the type code of the expression instead. */
+static SwigType *decltype_parenthesised_name_type(const struct Define *dtype) {
+  String *unwrapped;
+  SwigType *type;
+  Node *n;
+  int code;
+
+  if (!dtype->val)
+    return 0;
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  if (!unwrapped)
+    return 0;
+  n = Swig_symbol_clookup(unwrapped, 0);
+  type = n && Equal(nodeType(n), "cdecl") ? symbol_full_type(unwrapped) : 0;
+  Delete(unwrapped);
+  if (!type)
+    return 0;
+  if (SwigType_isfunction(type) || SwigType_isauto(type)) {
+    Delete(type);
+    return 0;
+  }
+
+  /* A name declared with a reference already denotes an lvalue of the referred-to type, so the reference the
+   * parentheses call for is the one it has. */
+  if (SwigType_isreference(type) || SwigType_isrvalue_reference(type))
+    Delete(SwigType_pop(type));
+
+  /* The reference is only added where the variable is wrapped through a pointer either way.  A scalar, an array,
+   * a character string and an enumeration are wrapped by value, and wrapping the reference instead would make
+   * each of them an opaque SWIGTYPE for no gain, an 'int&' variable behaving as an 'int' for both get and set. */
+  code = SwigType_type(type);
+  if (code == T_POINTER || code == T_MPOINTER || (code == T_USER && !type_names_enum(type)))
+    SwigType_add_reference(type);
+  return type;
+}
+
+/* The type 'decltype(e)' names for the expression 'e' that 'dtype' describes, which is also the type that
+   'decltype(auto) v = e;' deduces.  Returns a new type, or 0 when no type can be deduced. */
+static SwigType *decltype_type(const struct Define *dtype) {
+  SwigType *type = decltype_parenthesised_name_type(dtype);
+  return type ? type : deduce_type(dtype, 0);
+}
+
 /* Whether the initialiser 'dtype' is a parenthesised name of something in scope, such as the '(object)' of
    'decltype(auto) r = (object);'.  The decltype of a parenthesised id-expression is an lvalue reference to the
    object the name denotes, and the reference is not part of what the name was declared with, so a type deduced
@@ -2375,6 +2433,34 @@ static int initialiser_is_parenthesised_name(const struct Define *dtype) {
     Delete(unwrapped);
   }
   return parenthesised_name;
+}
+
+/* Whether the initialiser 'dtype' is an id-expression naming an object, optionally parenthesised, which makes it an
+   lvalue.  A literal and an enumerator are prvalues; the value category of any other expression is not something
+   SWIG tracks, so it is reported as not an lvalue. */
+static int initialiser_is_lvalue(const struct Define *dtype) {
+  String *unwrapped;
+  Node *n;
+  int lvalue = 0;
+  if (!dtype->val)
+    return 0;
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  n = Swig_symbol_clookup(unwrapped ? unwrapped : dtype->val, 0);
+  if (n && Equal(nodeType(n), "cdecl")) {
+    SwigType *decl = Getattr(n, "decl");
+    lvalue = !decl || !SwigType_isfunction(decl);
+  }
+  Delete(unwrapped);
+  return lvalue;
+}
+
+/* An rvalue reference declarator on an 'auto' placeholder is a forwarding reference, which collapses to an lvalue
+   reference when the initialiser is an lvalue, so 'auto&& r = g;' declares an 'int&'.  Adjusts 'decl' in place. */
+static void collapse_forwarding_reference(SwigType *decl, const struct Define *dtype) {
+  if (SwigType_isrvalue_reference(decl) && initialiser_is_lvalue(dtype)) {
+    Delete(SwigType_pop(decl));
+    SwigType_add_reference(decl);
+  }
 }
 
 /* Deduce the type the 'auto' placeholder stands for in a variable declaration, given 'initialiser_type', the type
@@ -2401,6 +2487,12 @@ static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *d
      * 'auto x = cg;' with 'cg' declared 'const int' deduces 'int' while 'auto& r = cg;' deduces 'const int'. */
     while (SwigType_isqualifier(placeholder))
       Delete(SwigType_pop(placeholder));
+    /* An array decays to a pointer to its first element unless the variable is a reference, so 'auto p = arr;'
+     * with 'arr' an 'int[4]' deduces 'int *' while 'auto& r = arr;' deduces 'int (&)[4]'. */
+    if (SwigType_isarray(placeholder)) {
+      Delete(SwigType_pop(placeholder));
+      SwigType_add_pointer(placeholder);
+    }
   }
 
   while (matched && Len(remaining) > 0) {
@@ -2473,9 +2565,9 @@ static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, 
     return 0;
   }
   if (isdecltypeauto && initialiser_is_parenthesised_name(dtype)) {
-    /* Likewise 'decltype(auto) r = (object);' declares a reference to the object, which the name it is
-     * parenthesising was not declared with, so no type is deduced rather than the type without the reference. */
-    return 0;
+    /* Likewise 'decltype(auto) r = (object);' declares a reference to the object, which is the type that
+     * 'decltype((object))' names rather than the type the name was declared with. */
+    return decltype_type(dtype);
   }
 
   initialiser_type = SwigType_isfunction(decl) ? 0 : deduce_type(dtype, !isdecltypeauto);
@@ -2491,8 +2583,12 @@ static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, 
     }
     Delete(initialiser_type);
   }
-  if (type && qualifier)
+  if (type && qualifier) {
+    /* A cv-qualifier on the declaration replaces the deduced top level cv-qualifiers, so 'const auto &x = cg;' with 'cg' a 'const int' is 'const int &'. */
+    while (SwigType_isqualifier(type))
+      Delete(SwigType_pop(type));
     SwigType_push(type, qualifier);
+  }
   return type;
 }
 
@@ -2534,12 +2630,16 @@ static void set_auto_variable_types(Node *first, const struct Define *first_dtyp
       dtype.val = Getattr(n, "value");
       dtype.type = GetInt(n, "initialisertypecode");
     }
+    if (!isdecltypeauto)
+      collapse_forwarding_reference(Getattr(n, "decl"), &dtype);
     type = auto_variable_type(&dtype, Getattr(n, "decl"), qualifier, isdecltypeauto);
     if (type) {
       Setattr(n, "autotype", type);
       if (!declaration_type)
         declaration_type = Copy(type);
       Delete(type);
+    } else if (isdecltypeauto && initialiser_is_string_literal(&dtype)) {
+      SetFlag(n, "autoarrayreference");
     }
   }
 
@@ -2686,17 +2786,68 @@ static void declarator_add_function(struct Decl *d, ParmList *parms, SwigType *q
   }
 }
 
-/* Drop the C++23 explicit object parameter, that is the leading parameter declared with the 'this' specifier, from
-   the parameter list 'parms' and return the parameters that follow it.  The explicit object parameter is how the
-   object the member function is called on is passed, so it is not one of the function's arguments and must appear
-   neither in the wrapper's parameter list nor in the function's declarator. */
-static ParmList *drop_explicit_object_parameter(ParmList *parms) {
+/* Mark the C++23 explicit object parameter, that is the parameter declared with the 'this' specifier.  The parameter
+   list is parsed the same way wherever it appears, so the mark records where 'this' was written and the rules that
+   can accept one check for it. */
+static ParmList *mark_explicit_object_parameter(ParmList *parms) {
   if (!parms) {
     Swig_error(cparse_file, cparse_line, "Missing parameter declaration after 'this'.\n");
     return 0;
   }
   if (Getattr(parms, "value"))
     Swig_error(cparse_file, cparse_line, "Explicit object parameter 'this' cannot have a default argument.\n");
+  SetFlag(parms, "explicitobject");
+  return parms;
+}
+
+/* The parenthesised list after a typemap pattern declares the typemap's local variables, which the declarator grammar
+   has already made a function of, so take that function back off the type and keep its parameters as the locals.  The
+   function is built underneath an array and underneath a pointer or reference to an array, so all are looked through. */
+static void declarator_remove_locals_function(struct Decl *d) {
+  SwigType *ptr_or_ref = 0;
+  SwigType *arrays = 0;
+  if (SwigType_ispointer(d->type) || SwigType_isreference(d->type) || SwigType_isrvalue_reference(d->type)) {
+    ptr_or_ref = SwigType_pop(d->type);
+    if (!SwigType_isarray(d->type)) {
+      SwigType_push(d->type, ptr_or_ref);
+      Delete(ptr_or_ref);
+      d->parms = 0;
+      return;
+    }
+  }
+  if (SwigType_isarray(d->type))
+    arrays = SwigType_pop_arrays(d->type);
+  if (SwigType_isfunction(d->type))
+    Delete(SwigType_pop_function(d->type));
+  else
+    d->parms = 0;
+  if (arrays) {
+    SwigType_push(d->type, arrays);
+    Delete(arrays);
+  }
+  if (ptr_or_ref) {
+    SwigType_push(d->type, ptr_or_ref);
+    Delete(ptr_or_ref);
+  }
+}
+
+/* Report a 'this' specifier where C++23 does not allow an explicit object parameter, which it allows only as the
+   first parameter of a member function declarator. */
+static void reject_explicit_object_parameter(ParmList *parms) {
+  if (parms && GetFlag(parms, "explicitobject")) {
+    Swig_error(cparse_file, cparse_line, "The explicit object parameter 'this' must be the first parameter of a member function.\n");
+    Delattr(parms, "explicitobject");
+  }
+}
+
+/* Drop a leading explicit object parameter from 'parms' and return the parameters that follow it, or return 'parms'
+   unchanged when there is none.  The explicit object parameter is how the object the member function is called on is
+   passed, so it is not one of the function's arguments and must appear neither in the wrapper's parameter list nor in
+   the function's declarator. */
+static ParmList *drop_explicit_object_parameter(ParmList *parms, short *found) {
+  if (!parms || !GetFlag(parms, "explicitobject"))
+    return parms;
+  *found = 1;
   return nextSibling(parms);
 }
 
@@ -2995,8 +3146,9 @@ constant_directive :  CONSTANT identifier EQUAL definetype SEMI {
                }
 	       /* Member function pointers with qualifiers. eg.
 	         %constant short (Funcs::*pmf)(bool) const = &Funcs::F; */
-	       | CONSTANT type direct_declarator LPAREN parms RPAREN cv_ref_qualifier def_args SEMI {
-		 SwigType_add_function($type, $parms);
+               | CONSTANT type direct_declarator LPAREN fn_parms RPAREN cv_ref_qualifier def_args SEMI {
+                 reject_explicit_object_parameter($fn_parms);
+                 SwigType_add_function($type, $fn_parms);
 		 SwigType_push($type, $cv_ref_qualifier.qualifier);
 		 SwigType_push($type, $direct_declarator.type);
 		 /* Sneaky callback function trick */
@@ -3982,7 +4134,8 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
                           linklistend = templnode;
                         }
                       }
-                      nn = Getattr(nn,"sym:nextSibling"); /* repeat for overloaded function templates. If a class template there will never be a sibling. */
+                      /* Repeat for overloaded function templates, a class template never has a sibling */
+                      nn = Getattr(nn, "csym:nextSibling");
                     }
                     update_defaultargs(linkliststart);
                     update_abstracts(linkliststart);
@@ -4378,6 +4531,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
                 SwigType *type;
                 dtype.val = braced_initialiser_value(scanner_ccode);
                 dtype.type = literal_type_code(dtype.val);
+                if (!$auto_type_holder.isdecltypeauto)
+                  collapse_forwarding_reference($declarator.type, &dtype);
                 type = auto_variable_type(&dtype, $declarator.type, $auto_type_holder.qualifier, $auto_type_holder.isdecltypeauto);
                 if (!type)
                   type = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
@@ -4806,8 +4961,7 @@ cpp_lambda_decl : storage_class auto_type_holder declarator cpp_const[unused] EQ
 
 /* A lambda's parameter list, which C++23 allows to start with an explicit object parameter.  A lambda is wrapped
    as an opaque object, so the parameters are only parsed, never used. */
-lambda_parms : LPAREN parms RPAREN
-             | LPAREN THIS parms RPAREN
+lambda_parms : LPAREN fn_parms RPAREN
              ;
 
 /* An explicit trailing return type, shared by a function and a lambda.  As well as any type-id, C++ allows it to be
@@ -5201,6 +5355,7 @@ cpp_class_decl: storage_class cpptype idcolon class_virt_specifier_opt inherit L
 		   if (cparse_cplusplusout) {
 		     /* save the structure declaration to declare it in global scope for C++ to see */
 		     code = get_raw_text_balanced('{', '}');
+                     if (!code) Exit(EXIT_FAILURE);
 		     Setattr($$, "code", code);
 		     Delete(code);
 		   }
@@ -5424,6 +5579,7 @@ cpp_class_decl: storage_class cpptype idcolon class_virt_specifier_opt inherit L
 	       Namespaceprefix = Swig_symbol_qualifiedscopename(0);
 	       /* save the structure declaration to make a typedef for it later*/
 	       code = get_raw_text_balanced('{', '}');
+               if (!code) Exit(EXIT_FAILURE);
 	       Setattr($$, "code", code);
 	       Delete(code);
 	     }[node] cpp_members RBRACE cpp_opt_declarators {
@@ -5601,7 +5757,25 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
 			}
 
 			if ($$) tname = Getattr($$,"name");
-			
+
+                        /* Attach prefix requires-clause subtree (e.g. 'template<T> requires C<T>') to the
+                           inner template node's "constraint" attribute.  If a trailing requires-clause is
+                           already present on the cdecl (set by c_decl), conjoin the two structurally into
+                           a single op="and" constraint subtree per [temp.constr.decl].  This has to happen
+                           before the node reaches the symbol table, which tells two function templates that
+                           differ only by their constraints apart. */
+                        if (ni && $requires_clause_opt) {
+                          Node *trailing = Getattr(ni, "constraint");
+                          Node *combined;
+                          if (trailing) {
+                            Delattr(ni, "constraint");
+                            combined = Constraint_combine("and", $requires_clause_opt, trailing);
+                          } else {
+                            combined = $requires_clause_opt;
+                          }
+                          Setattr(ni, "constraint", combined);
+                        }
+
 			/* Check if the class is a template specialization */
 			if (($$) && (Strchr(tname,'<')) && (!is_operator(tname))) {
 			  /* If a specialization.  Check if defined. */
@@ -5642,24 +5816,11 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
 			      Swig_error(Getfile($$), Getline($$), "Template partial specialization has fewer arguments than primary template %d %d.\n", specialization_parms_len, ParmList_len(primary_templateparms));
 			    } else {
 			      /* Create a specialized name with template parameters replaced with $ variables, such as, X<(T1,p.T2) => X<($1,p.$2)> */
-			      Parm *p = $template_parms;
 			      String *fname = NewString(tname);
 			      String *ffname = 0;
 			      ParmList *partialparms = 0;
 
-			      char   tmp[32];
-			      int i = 0;
-			      while (p) {
-				String *name = Getattr(p,"name");
-				++i;
-				if (!name) {
-				  p = nextSibling(p);
-				  continue;
-				}
-				snprintf(tmp, sizeof(tmp), "$%d", i);
-				Replaceid(fname, name, tmp);
-				p = nextSibling(p);
-			      }
+                              ParmList_replace_names_positional(fname, $template_parms, 0);
 			      /* Patch argument names with typedef */
 			      {
 				Iterator tt;
@@ -5690,20 +5851,16 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
 			      {
 				/* Replace each primary template parameter's name and value with $ variables, such as, class Y,class T=Y => class $1,class $2=$1 */
 				ParmList *primary_templateparms_copy = CopyParmList(primary_templateparms);
-				p = primary_templateparms_copy;
-				i = 0;
-				while (p) {
-				  String *name = Getattr(p, "name");
-				  Parm *pp = nextSibling(p);
-				  ++i;
-				  snprintf(tmp, sizeof(tmp), "$%d", i);
-				  while (pp) {
-				    Replaceid(Getattr(pp, "value"), name, tmp);
-				    pp = nextSibling(pp);
-				  }
-				  Setattr(p, "name", NewString(tmp));
-				  p = nextSibling(p);
-				}
+                                Parm *p;
+                                int i = 0;
+                                /* A default value can only refer to the template parameters before it */
+                                for (p = primary_templateparms_copy; p; p = nextSibling(p))
+                                  ParmList_replace_names_positional(Getattr(p, "value"), primary_templateparms_copy, p);
+                                for (p = primary_templateparms_copy; p; p = nextSibling(p)) {
+                                  String *name = NewStringf("$%d", ++i);
+                                  Setattr(p, "name", name);
+                                  Delete(name);
+                                }
 				/* Modify partialparms by adding in missing default values ($ variables) from primary template parameters */
 				partialparms = Swig_cparse_template_partialargs_expand(partialparms, tempn, primary_templateparms_copy);
 				Delete(primary_templateparms_copy);
@@ -5774,21 +5931,6 @@ cpp_template_decl : TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause
 			    Swig_symbol_cadd(fname,$$);
 			  }
 			}
-                        /* Attach prefix requires-clause subtree (e.g. 'template<T> requires C<T>') to the
-                           inner template node's "constraint" attribute.  If a trailing requires-clause is
-                           already present on the cdecl (set by c_decl), conjoin the two structurally into
-                           a single op="and" constraint subtree per [temp.constr.decl]. */
-                        if (ni && $requires_clause_opt) {
-                          Node *trailing = Getattr(ni, "constraint");
-                          Node *combined;
-                          if (trailing) {
-                            Delattr(ni, "constraint");
-                            combined = Constraint_combine("and", $requires_clause_opt, trailing);
-                          } else {
-                            combined = $requires_clause_opt;
-                          }
-                          Setattr(ni, "constraint", combined);
-                        }
 			$$ = ntop;
 			Swig_symbol_setscope(cscope);
 			Delete(Namespaceprefix);
@@ -6722,6 +6864,15 @@ parms          : rawparms {
                }
     	       ;
 
+/* The parameter list of a function declarator, which C++23 allows to start with an explicit object parameter.  A
+   'this' further along the list is matched by rawparms below wherever a parameter list appears, so that a misplaced
+   one is diagnosed rather than reported as a syntax error. */
+fn_parms       : parms
+               | THIS parms[in] {
+                 $$ = mark_explicit_object_parameter($in);
+               }
+               ;
+
 /* rawparms constructs parameter lists and deal with quirks of doxygen post strings (after the parameter's comma */
 rawparms	: parm { $$ = $parm; }
 		| parm DOXYGENPOSTSTRING {
@@ -6733,22 +6884,25 @@ rawparms	: parm { $$ = $parm; }
 		  set_comment($parm, $DOXYGENSTRING);
 		  $$ = $parm;
 		}
-		| parm COMMA parms {
-		  if ($parms) {
-		    set_nextSibling($parm, $parms);
+                | parm COMMA fn_parms[tail] {
+                  if ($tail) {
+                    reject_explicit_object_parameter($tail);
+                    set_nextSibling($parm, $tail);
 		  }
 		  $$ = $parm;
 		}
-		| parm DOXYGENPOSTSTRING COMMA parms {
-		  if ($parms) {
-		    set_nextSibling($parm, $parms);
+                | parm DOXYGENPOSTSTRING COMMA fn_parms[tail] {
+                  if ($tail) {
+                    reject_explicit_object_parameter($tail);
+                    set_nextSibling($parm, $tail);
 		  }
 		  set_comment($parm, $DOXYGENPOSTSTRING);
 		  $$ = $parm;
 		}
-		| parm COMMA DOXYGENPOSTSTRING parms {
-		  if ($parms) {
-		    set_nextSibling($parm, $parms);
+                | parm COMMA DOXYGENPOSTSTRING fn_parms[tail] {
+                  if ($tail) {
+                    reject_explicit_object_parameter($tail);
+                    set_nextSibling($parm, $tail);
 		  }
 		  set_comment($parm, $DOXYGENPOSTSTRING);
 		  $$ = $parm;
@@ -6922,57 +7076,33 @@ parameter_declarator : declarator def_args {
             }
 	    /* Member function pointers with qualifiers. eg.
 	      int f(short (Funcs::*parm)(bool) const); */
-	    | direct_declarator LPAREN parms RPAREN qualifiers_exception_specification {
+            | direct_declarator LPAREN fn_parms RPAREN qualifiers_exception_specification {
               SwigType *qualifier = $qualifiers_exception_specification.qualifier;
               if ($qualifiers_exception_specification.nexcept) {
                 if (!qualifier)
                   qualifier = NewStringEmpty();
                 SwigType_add_qualifier(qualifier, "noexcept");
               }
+              reject_explicit_object_parameter($fn_parms);
               $$ = $direct_declarator;
-              declarator_add_function(&$$, $parms, qualifier);
+              declarator_add_function(&$$, $fn_parms, qualifier);
 	    }
             ;
 
 plain_declarator : declarator {
                  $$ = $declarator;
-		 if (SwigType_isfunction($declarator.type)) {
-		   Delete(SwigType_pop_function($declarator.type));
-		 } else if (SwigType_isarray($declarator.type)) {
-		   SwigType *ta = SwigType_pop_arrays($declarator.type);
-		   if (SwigType_isfunction($declarator.type)) {
-		     Delete(SwigType_pop_function($declarator.type));
-		   } else {
-		     $$.parms = 0;
-		   }
-		   SwigType_push($declarator.type,ta);
-		   Delete(ta);
-		 } else {
-		   $$.parms = 0;
-		 }
+                 declarator_remove_locals_function(&$$);
             }
             | abstract_declarator {
               $$ = $abstract_declarator;
-	      if (SwigType_isfunction($abstract_declarator.type)) {
-		Delete(SwigType_pop_function($abstract_declarator.type));
-	      } else if (SwigType_isarray($abstract_declarator.type)) {
-		SwigType *ta = SwigType_pop_arrays($abstract_declarator.type);
-		if (SwigType_isfunction($abstract_declarator.type)) {
-		  Delete(SwigType_pop_function($abstract_declarator.type));
-		} else {
-		  $$.parms = 0;
-		}
-		SwigType_push($abstract_declarator.type,ta);
-		Delete(ta);
-	      } else {
-		$$.parms = 0;
-	      }
+              declarator_remove_locals_function(&$$);
             }
 	    /* Member function pointers with qualifiers. eg.
 	      int f(short (Funcs::*parm)(bool) const) */
-	    | direct_declarator LPAREN parms RPAREN cv_ref_qualifier {
+            | direct_declarator LPAREN fn_parms RPAREN cv_ref_qualifier {
+              reject_explicit_object_parameter($fn_parms);
               $$ = $direct_declarator;
-              declarator_add_function(&$$, $parms, $cv_ref_qualifier.qualifier);
+              declarator_add_function(&$$, $fn_parms, $cv_ref_qualifier.qualifier);
 	    }
             | %empty {
 	      $$ = default_decl;
@@ -7264,14 +7394,9 @@ notso_direct_declarator : idcolon {
 		    }
 		    $$.type = t;
                   }
-                  | notso_direct_declarator[in] LPAREN parms RPAREN {
+                  | notso_direct_declarator[in] LPAREN fn_parms RPAREN {
                     $$ = $in;
-                    declarator_add_function(&$$, $parms, 0);
-                  }
-                  | notso_direct_declarator[in] LPAREN THIS parms RPAREN {
-                    $$ = $in;
-                    declarator_add_function(&$$, drop_explicit_object_parameter($parms), 0);
-                    $$.explicit_object_parm = 1;
+                    declarator_add_function(&$$, drop_explicit_object_parameter($fn_parms, &$$.explicit_object_parm), 0);
                   }
                   ;
 
@@ -7384,18 +7509,13 @@ direct_declarator : idcolon {
 		    }
 		    $$.type = t;
                   }
-                  | direct_declarator[in] LPAREN parms RPAREN {
-                    $$ = $in;
-                    declarator_add_function(&$$, $parms, 0);
-                  }
                   /* C++23 explicit object parameter: 'this' declares the first parameter of a member function to be
                    * the object the function is called on, in place of the implicit object parameter.  It is not one
                    * of the function's arguments, so it is dropped from both the parameter list and the declarator and
                    * the member function is wrapped with the arguments that follow it. */
-                  | direct_declarator[in] LPAREN THIS parms RPAREN {
+                  | direct_declarator[in] LPAREN fn_parms RPAREN {
                     $$ = $in;
-                    declarator_add_function(&$$, drop_explicit_object_parameter($parms), 0);
-                    $$.explicit_object_parm = 1;
+                    declarator_add_function(&$$, drop_explicit_object_parameter($fn_parms, &$$.explicit_object_parm), 0);
                   }
                  /* User-defined string literals. eg.
                     int operator""_mySuffix(const char* val, int length) {...}
@@ -7697,7 +7817,7 @@ decltype       : decltype_prefix[expr] decltypeexpr {
 	       ;
 
 decltypeexpr   : expr RPAREN {
-                 $$ = deduce_type(&$expr, 0);
+                 $$ = decltype_type(&$expr);
 	       }
 	       | error RPAREN {
 		 /* Avoid a parse error if we can't parse the expression
