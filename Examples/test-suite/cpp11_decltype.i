@@ -62,6 +62,38 @@
     return &held;
   }
 
+  // The same adjustments apply where a typedef hides the array or function the parameter is.
+  typedef int FunctionAlias(int);
+  typedef int ArrayAlias[10];
+
+  auto function_alias_parameter(FunctionAlias fn) -> decltype(fn) {
+    return fn;
+  }
+
+  auto array_alias_parameter(ArrayAlias values) -> decltype(values) {
+    return values;
+  }
+
+  auto array_alias_parameter_address(ArrayAlias values) -> decltype(&values) {
+    static int *held;
+    held = values;
+    return &held;
+  }
+
+  using FunctionUsing = int(int);
+  template<typename T> using FunctionTemplateUsing = T(T);
+%}
+%template() FunctionTemplateUsing<int>;
+%inline %{
+
+  auto function_using_parameter(FunctionUsing fn) -> decltype(fn) {
+    return fn;
+  }
+
+  auto function_template_using_parameter(FunctionTemplateUsing<int> fn) -> decltype(fn) {
+    return fn;
+  }
+
   int increment(int x) { return x + 1; }
   int (*increment_ptr)(int) = increment;
 

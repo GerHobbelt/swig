@@ -20,6 +20,209 @@ Version 4.6.0 (in progress)
 	    `std_string.i` instead) and some for std::complex which I've moved
 	    to new library files `complex.i` and `std_complex.i`.
 
+2026-09-23: wsfulton
+            Fix a member function template with a parameter pack of its own in a
+            variadic class template:
+
+              template<typename... T> struct Holder {
+                template<typename... U> int both(T... t, U... u);
+                template<typename... U> int own(U... u);
+              };
+              %template(HolderIS) Holder<int, short>;
+              %extend Holder<int, short> {
+                %template(both) both<double>;
+                %template(own) own<double, double, double>;
+              }
+
+            Instantiating the class also expanded the member template's pack,
+            with the class's template arguments, so the wrapper for both did not
+            compile and own was given two parameters instead of three.
+
+2026-09-23: wsfulton
+            An instantiation of an abbreviated function template is now named
+            with all its template arguments, so %rename, %ignore and %feature can
+            select one instantiation, as for an explicitly written template:
+
+              void climbed(auto x);
+              %ignore climbed<int>(int);
+              %template(climbed_int) climbed<int>;
+              %template(climbed_double) climbed<double>;
+
+            The name previously left out the arguments of the auto parameters,
+            climbed<>, which a directive written as climbed<>(int) matched.
+            The generated call now names them too, so it calls an explicit
+            specialization such as climbed<const int> where it previously called
+            the primary template, and a duplicate %template now gives warning
+            404.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-09-23: wsfulton
+            Fix the wrapper for a function template whose parameter pack is
+            followed by another template parameter, which did not compile:
+
+              template<typename... T, typename U> int f(T... t, U u);
+              %template(f_iid) f<int, int, double>;
+
+            The call now names only the pack's template arguments, f<int, int>,
+            and the last is deduced, as C++ requires.
+
+2026-09-22: wsfulton
+            Fix an alias declaration for a function type, which was mistakenly
+            treated as an alias for the function's return type:
+
+              using FunctionUsing = int(int);
+              template<typename T> using FunctionTemplateUsing = T(T);
+
+            The typedef equivalent was already correct.
+
+2026-09-21: wsfulton
+            A new-expression is now parsed as a variable initialiser and as a
+            default argument, where it was a syntax error that ended parsing:
+
+              int *made = new int(5);
+              int take(int *p = new int(5));
+
+            'new' was not recognised as a keyword, so SWIG exited at the first
+            new-expression and nothing after it was wrapped.  An 'auto' variable
+            initialised by a new-expression is still ignored with warning 346, as
+            SWIG does not deduce a type from one.
+
+2026-09-21: wsfulton
+            Fix decltype in a trailing return type naming a function or array
+            parameter declared with a typedef:
+
+              typedef int FunctionAlias(int);
+              typedef int ArrayAlias[3];
+              auto f(FunctionAlias fn) -> decltype(fn);
+              auto g(ArrayAlias values) -> decltype(&values);
+
+            Such a parameter is a pointer, so the return types are
+            'int (*)(int)' and 'int **', as they already were without the
+            typedef.  The wrapper for f did not compile and g had the wrong
+            return type.
+
+2026-09-21: wsfulton
+            A C++23 explicit object parameter declared as an rvalue reference to
+            the class is now ignored with warning 405, where it generated a call
+            that did not compile:
+
+              struct S {
+                int m(this S &&self);
+              };
+
+            Such a member function can only be called on an rvalue and the
+            object a wrapper is given is an lvalue, so the generated call was
+            rejected by the C++ compiler with no warning from SWIG.  It is the
+            C++23 way of writing 'int m() &&', which was already ignored with
+            that warning.  The deduced 'this auto &&self' form, and a template
+            parameter as in 'template<typename Self> int m(this Self &&self)',
+            are forwarding references rather than rvalue references and are
+            wrapped as before.
+
+2026-09-21: wsfulton
+            More than one template parameter pack is now substituted when a
+            template is instantiated:
+
+              int two_packs(auto... first, auto... second);
+              %template(two_packs_iii) two_packs<int, int, int>;
+
+            Only the first pack used to be substituted, which left the second
+            pack's invented template parameter name in the declaration, and
+            SWIG divided the template arguments between the packs.  Every
+            explicitly written template argument goes to the first pack now,
+            as it does in C++, leaving the later packs empty; a pack that is
+            not the last function parameter is a non-deduced context, so there
+            is nothing left for a later one to take.
+
+            Note this changes which pack a wrapped parameter belongs to for an
+            instantiation of a function with two packs.
+
+2026-09-21: wsfulton
+            [PHP] Fix assertion failure wrapping a %callback on a member function.
+
+2026-09-21: wsfulton
+            [Go] Fix segfault wrapping a %callback.
+
+2026-09-21: wsfulton
+            [Go] Fix -debug-tmused aborting on an assertion.
+
+2026-09-21: wsfulton
+            [Issue #3041] A decltype of an operand SWIG cannot parse no longer
+            swallows the rest of the file:
+
+              decltype(1 < 2) lt_test = 0;
+              decltype("abc"[1]) array_deref = 0;
+
+            reported "Missing ')'. Reached end of input." and nothing after the
+            declaration was wrapped.  Warning 344 is issued for the operand and
+            parsing carries on, which is what already happened when the operand had
+            parentheses of its own.
+
+2026-09-21: wsfulton
+            An 'auto' variable initialised by a string literal with a u8, u or U
+            encoding prefix is now ignored with a warning naming the prefix, where
+            it was wrapped as a 'const char *':
+
+              auto text = u8"text";    // const char8_t *, not const char *
+
+            The generated wrapper read and wrote the variable as a 'const char *'
+            and did not compile.  A 'decltype(auto)' variable initialised by one of
+            these was already ignored; ordinary 'auto' deduces the pointer the
+            array decays to and so is of a character type SWIG has no type for in
+            just the same way.
+
+2026-09-21: wsfulton
+            A wide string literal is now of 'const wchar_t *' where it was of
+            'wchar_t *', matching the 'const char *' a narrow one has always been:
+
+              auto wide = L"text";           // const wchar_t *
+              #define WIDE_DEF L"text"       // const wchar_t *
+
+            The const is what C++ gives the literal, and the two spellings
+            disagreeing meant a typemap written for one of them did not apply to
+            the other.  Wide string constants defined with #define and %constant
+            are of the const type now as well.
+
+2026-09-20: wsfulton
+            A 'decltype(auto)' variable initialised by a string literal is now
+            wrapped rather than ignored.  A string literal is an lvalue of array
+            type, so such a variable is a reference to the array of characters
+            the literal is, which is wrapped as the array itself is:
+
+              decltype(auto) text = "abc";    // const char (&)[4]
+
+            The u8, u and U encoding prefixes give a literal one of the char8_t,
+            char16_t and char32_t character types, none of which SWIG has a type
+            for, so a variable initialised by one of those is still ignored, now
+            with a warning naming the prefix.
+
+2026-09-20: wsfulton
+            [C#, D, Go, Guile, Java, Lua, OCaml, PHP] A variable or member that
+            is a reference to an array of char is now wrapped as the string the
+            array itself is wrapped as, rather than as an opaque pointer:
+
+              char letters[4] = "abc";
+              char (&letters_ref)[4] = letters;
+
+            The other target languages already wrapped one as a string. A
+            function parameter of type 'char (&)[N]' or 'const char (&)[N]' now
+            likewise requires a string and no longer accepts a pointer to the
+            array.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-09-20: wsfulton
+            [Guile] An array of char is now wrapped as a string, as it is in
+            every other target language, rather than as an opaque pointer:
+
+              char letters[4] = "abc";
+
+            A function parameter of type 'char [N]' or 'char []' now likewise
+            requires a string and no longer accepts a pointer.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
 2026-09-19: wsfulton
             A typemap written with an [ANY] array dimension is now matched
             behind a pointer to an array, and can declare local variables, in

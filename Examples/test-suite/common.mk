@@ -179,6 +179,7 @@ CPP_TEST_CASES += \
 	cpp_basic \
 	cpp_enum \
 	cpp_namespace \
+	cpp_new_expression \
 	cpp_nodefault \
 	cpp_parameters \
 	cpp_static \
@@ -755,6 +756,7 @@ CPP17_TEST_BROKEN = \
 CPP20_TEST_CASES += \
 	cpp20_abbreviated_template \
 	cpp20_abbreviated_template_decorated \
+	cpp20_abbreviated_template_directives \
 	cpp20_abbreviated_template_mixed \
 	cpp20_abbreviated_template_overloads \
 	cpp20_alias_template \

@@ -891,9 +891,10 @@ static void add_symbols(Node *n) {
               Swig_warning(WARN_CPP14_AUTO, Getfile(n), Getline(n), "Unable to deduce auto return type for '%s' without a trailing return type (ignored).\n",
                   Swig_name_decl(n));
             }
-          } else if (GetFlag(n, "autoarrayreference")) {
-            Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to wrap variable '%s' deduced as a reference to an array of characters (ignored).\n",
-                Swig_name_decl(n));
+          } else if (Getattr(n, "autoliteralprefix")) {
+            Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n),
+                "Unable to deduce auto type for variable '%s' from a string literal with a '%s' prefix (ignored).\n",
+                Swig_name_decl(n), Getattr(n, "autoliteralprefix"));
           } else if (value) {
             Swig_warning(WARN_CPP11_AUTO, Getfile(n), Getline(n), "Unable to deduce auto type for variable '%s' from initialiser '%s' (ignored).\n",
                 Swig_name_decl(n), value);
@@ -2028,8 +2029,9 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
     String    *numdefarg;
     ParmList  *parms;
     short      have_parms;
-    /* C++23 explicit object parameter, that is a leading 'this' parameter on the function declarator. */
-    short      explicit_object_parm;
+    /* The type of the C++23 explicit object parameter, that is a leading 'this' parameter on the function declarator,
+     * or 0 when there is none.  The type is what carries the value category of the object. */
+    SwigType  *explicit_object_type;
     ParmList  *throws;
     String    *throwf;
     String    *nexcept;
@@ -2099,7 +2101,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %token NATIVE INLINE
 %token TYPEMAP ECHO APPLY CLEAR SWIGTEMPLATE FRAGMENT
 %token WARN 
-%token LESSTHAN GREATERTHAN DELETE_KW DEFAULT
+%token LESSTHAN GREATERTHAN DELETE_KW NEW_KW DEFAULT
 %token LESSTHANOREQUALTO GREATERTHANOREQUALTO EQUALTO NOTEQUALTO LESSEQUALGREATER
 %token ARROW
 %token QUESTIONMARK
@@ -2237,14 +2239,22 @@ static String *trailing_rettype_placeholder_parm = 0;
    element and a function parameter the type pointer to function.  normalize_parms() in typepass.cxx applies the
    function half to the parameter itself, but that is a later pass and a decltype here is resolved while parsing. */
 static void adjust_parm_type(SwigType *t) {
+  SwigType *resolved;
   if (SwigType_isreference(t) || SwigType_isrvalue_reference(t))
     return;
-  if (SwigType_isarray(t)) {
+  /* A typedef or alias hides the array or function the parameter is, and SwigType_typedef_resolve() cannot look
+   * through it here because the typedef tables are not built until typepass.  The symbol table is populated as the
+   * file is parsed, so reduce through that instead; a name it does not know or has missing type info is left alone. */
+  resolved = Swig_symbol_typedef_reduce(t, Swig_symbol_current());
+  if (SwigType_isarray(resolved)) {
+    Clear(t);
+    Append(t, resolved);
     SwigType_del_array(t);
     SwigType_add_pointer(t);
-  } else if (SwigType_isfunction(t)) {
+  } else if (SwigType_isfunction(resolved)) {
     SwigType_add_pointer(t);
   }
+  Delete(resolved);
 }
 
 /* A copy of the adjusted type of the function parameter named 'name' of the function whose trailing return type is
@@ -2518,7 +2528,8 @@ static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *d
 
 /* Whether the initialiser 'dtype' is a string literal, optionally parenthesised.  The T_STRING code alone does not
    say so: a named cast to 'const char *' summarises to T_STRING too, as does the address of a character and an
-   expression such as '"text" + 1' that merely has a literal as an operand, hence the check on the whole text. */
+   expression such as '"text" + 1' that merely has a literal as an operand, hence the check on the whole text.
+   The decoded text is required as well, that being where the length of the literal is read from. */
 static int initialiser_is_string_literal(const struct Define *dtype) {
   String *unwrapped;
   const char *text;
@@ -2526,7 +2537,7 @@ static int initialiser_is_string_literal(const struct Define *dtype) {
 
   if (dtype->type != T_STRING && dtype->type != T_WSTRING)
     return 0;
-  if (!dtype->val)
+  if (!dtype->val || !dtype->stringval)
     return 0;
   unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
   text = Char(unwrapped ? unwrapped : dtype->val);
@@ -2548,6 +2559,46 @@ static int initialiser_is_string_literal(const struct Define *dtype) {
   return is_literal;
 }
 
+/* Carry the encoding prefix of the string literal 'piece' onto 'literal', the run of adjacent literals it is
+   being concatenated onto.  The run makes one literal of the character type a u8, u or U prefix gives it, else an L
+   prefix, so it keeps the first such prefix, the 'u8' of both u8"a" u8"b" and R"(a)" u8"b". */
+static void append_literal_prefix(String *literal, String *piece) {
+  String *prefix = Getmeta(piece, "encodingprefix");
+  String *kept = Getmeta(literal, "encodingprefix");
+  if (!prefix || (kept && (Strchr(kept, 'u') || Strchr(kept, 'U'))))
+    return;
+  if (Strchr(prefix, 'u') || Strchr(prefix, 'U') || (Strchr(prefix, 'L') && !(kept && Strchr(kept, 'L'))))
+    Setmeta(literal, "encodingprefix", prefix);
+}
+
+/* The encoding prefix of the string literal 'stringval' when that prefix gives the literal one of the char8_t,
+   char16_t and char32_t character types, which SWIG has no type for, and 0 when the literal is of char or
+   wchar_t.  Returns the prefix of whichever of a concatenated run of literals carries one. */
+static String *unsupported_literal_prefix(String *stringval) {
+  String *prefix = Getmeta(stringval, "encodingprefix");
+  return prefix && (Strchr(prefix, 'u') || Strchr(prefix, 'U')) ? prefix : 0;
+}
+
+/* The type of the string literal initialiser 'dtype', which is the array of characters the literal is, so
+   'const char [5]' for "text".  The bound counts the characters of the decoded text and the terminating null.
+   Returns 0 for a literal whose character type SWIG has no type for. */
+static SwigType *string_literal_type(const struct Define *dtype) {
+  String *prefix;
+  SwigType *type;
+  String *bound;
+
+  if (unsupported_literal_prefix(dtype->stringval))
+    return 0;
+  /* A wide literal reaches the grammar as T_WSTRING, except for a raw one, whose L is only in the prefix. */
+  prefix = Getmeta(dtype->stringval, "encodingprefix");
+  type = NewString(dtype->type == T_WSTRING || (prefix && Strchr(prefix, 'L')) ? "wchar_t" : "char");
+  bound = NewStringf("%d", Len(dtype->stringval) + 1);
+  SwigType_add_qualifier(type, "const");
+  SwigType_add_array(type, bound);
+  Delete(bound);
+  return type;
+}
+
 /* The type of an 'auto' variable declared with declarator 'decl' and initialised by 'dtype', which is the type
    deduced from the initialiser with the declarator decoration removed and the placeholder's own cv-qualifier
    added back.  Returns 0 when the initialiser is not one a type can be deduced from.  A function declarator makes
@@ -2557,12 +2608,18 @@ static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, 
   SwigType *type = 0;
   SwigType *initialiser_type;
 
-  if (isdecltypeauto && initialiser_is_string_literal(dtype)) {
-    /* A string literal is an lvalue of array type, so 'decltype(auto) s = "text";' declares a reference to an
-     * array of characters and not the 'const char *' that ordinary 'auto' deduces.  The grammar writes the
-     * value text with at most an 'L' prefix, so which character type the literal has is no longer there to
-     * read and the type cannot be named, and no type is deduced. */
+  if (initialiser_is_string_literal(dtype) && unsupported_literal_prefix(dtype->stringval)) {
+    /* The u8, u and U prefixes give a literal one of the char8_t, char16_t and char32_t character types. */
     return 0;
+  }
+  if (isdecltypeauto && initialiser_is_string_literal(dtype)) {
+    /* A string literal is an lvalue ([expr.prim.literal]/1) of array type ([lex.string]/5), and decltype of an
+     * lvalue of type T is T reference ([dcl.type.decltype]/1.5), so 'decltype(auto) s = "text";' declares a
+     * reference to an array of characters and not the 'const char *' that ordinary 'auto' deduces. */
+    type = string_literal_type(dtype);
+    if (type)
+      SwigType_add_reference(type);
+    return type;
   }
   if (isdecltypeauto && initialiser_is_parenthesised_name(dtype)) {
     /* Likewise 'decltype(auto) r = (object);' declares a reference to the object, which is the type that
@@ -2628,6 +2685,7 @@ static void set_auto_variable_types(Node *first, const struct Define *first_dtyp
       dtype = *first_dtype;
     } else {
       dtype.val = Getattr(n, "value");
+      dtype.stringval = Getattr(n, "stringval");
       dtype.type = GetInt(n, "initialisertypecode");
     }
     if (!isdecltypeauto)
@@ -2638,8 +2696,10 @@ static void set_auto_variable_types(Node *first, const struct Define *first_dtyp
       if (!declaration_type)
         declaration_type = Copy(type);
       Delete(type);
-    } else if (isdecltypeauto && initialiser_is_string_literal(&dtype)) {
-      SetFlag(n, "autoarrayreference");
+    } else if (initialiser_is_string_literal(&dtype)) {
+      String *prefix = unsupported_literal_prefix(dtype.stringval);
+      if (prefix)
+        Setattr(n, "autoliteralprefix", prefix);
     }
   }
 
@@ -2843,18 +2903,48 @@ static void reject_explicit_object_parameter(ParmList *parms) {
 /* Drop a leading explicit object parameter from 'parms' and return the parameters that follow it, or return 'parms'
    unchanged when there is none.  The explicit object parameter is how the object the member function is called on is
    passed, so it is not one of the function's arguments and must appear neither in the wrapper's parameter list nor in
-   the function's declarator. */
-static ParmList *drop_explicit_object_parameter(ParmList *parms, short *found) {
+   the function's declarator.  Its type is returned in 'type'. */
+static ParmList *drop_explicit_object_parameter(ParmList *parms, SwigType **type) {
   if (!parms || !GetFlag(parms, "explicitobject"))
     return parms;
-  *found = 1;
+  *type = Getattr(parms, "type");
   return nextSibling(parms);
+}
+
+/* Whether the explicit object parameter declared with 'type' is an rvalue reference to the class itself, which is
+   the C++23 way of writing an '&&' ref-qualifier.  A forwarding reference is written with a deduced type instead -
+   'this auto&&', or a template parameter as in 'template<typename Self> f(this Self&&)' - and binds an lvalue just
+   as well, so it is not one of these.  The class is named by Classprefix within a class body and by the qualifier
+   on the name for a member defined outside one; when neither identifies it the parameter is left alone. */
+static int explicit_object_parameter_is_rvalue(Node *n, SwigType *type) {
+  String *classname = Classprefix;
+  String *qualified = 0;
+  SwigType *base;
+  int isrvalue;
+  if (!type || !SwigType_isrvalue_reference(type))
+    return 0;
+  if (!classname) {
+    String *name = Getattr(n, "name");
+    if (name && Swig_scopename_check(name)) {
+      String *prefix = Swig_scopename_prefix(name);
+      qualified = Swig_scopename_last(prefix);
+      classname = qualified;
+      Delete(prefix);
+    }
+  }
+  base = SwigType_base(type);
+  isrvalue = classname && Len(classname) > 0 && Equal(base, classname);
+  Delete(base);
+  Delete(qualified);
+  return isrvalue;
 }
 
 /* Diagnose the restrictions C++23 places on a function declared with an explicit object parameter: it has to be a
    non-static, non-virtual member function and cannot be declared with a cv-qualifier or a ref-qualifier, as the
-   explicit object parameter itself is what carries the value category and constness of the object. */
-static void check_explicit_object_parameter(Node *n, String *storage, String *qualifier, String *refqualifier) {
+   explicit object parameter itself is what carries the value category and constness of the object.  An explicit
+   object parameter declared as an rvalue reference to the class carries the value category of an rvalue
+   ref-qualifier, so that ref-qualifier is added to the declaration. */
+static void check_explicit_object_parameter(Node *n, String *storage, String *qualifier, String *refqualifier, SwigType *explicit_object_type) {
   String *name = Getattr(n, "name");
   /* A member function defined outside its class is written at namespace scope, so a qualified name is a member too. */
   int ismember = inclass || extendmode || (name && Swig_scopename_check(name));
@@ -2864,6 +2954,12 @@ static void check_explicit_object_parameter(Node *n, String *storage, String *qu
     Swig_error(cparse_file, cparse_line, "Member function %s with an explicit object parameter 'this' cannot be declared static or virtual.\n", Swig_name_decl(n));
   } else if (qualifier || refqualifier) {
     Swig_error(cparse_file, cparse_line, "Member function %s with an explicit object parameter 'this' cannot have a qualifier.\n", Swig_name_decl(n));
+  } else if (explicit_object_parameter_is_rvalue(n, explicit_object_type)) {
+    /* 'int f(this S &&self)' is the C++23 way of writing the rvalue ref-qualifier in 'int f() &&': either way the
+     * function can only be called on an rvalue.  Add the ref-qualifier to the declaration so the two spellings are
+     * handled alike, which by default means ignoring the function, as a wrapper calls it on an lvalue - the object
+     * the wrapper holds a pointer to. */
+    Setattr(n, "refqualifier", "z.");
   }
 }
 
@@ -3861,6 +3957,7 @@ tm_list_builder: typemap_parm {
 
 typemap_parm   : type plain_declarator {
                   Parm *parm;
+                  declarator_remove_locals_function(&$plain_declarator);
 		  SwigType_push($type,$plain_declarator.type);
 		  $$ = new_node("typemapitem");
 		  parm = NewParmWithoutFileLineInfo($type,$plain_declarator.id);
@@ -4287,8 +4384,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$,"decl",decl);
 	      Setattr($$,"parms",$declarator.parms);
 	      Setattr($$,"value",$initializer.val);
-              if ($declarator.explicit_object_parm)
-                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
+              if ($declarator.explicit_object_type)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier, $declarator.explicit_object_type);
 	      if ($initializer.stringval) Setattr($$, "stringval", $initializer.stringval);
 	      if ($initializer.numval) Setattr($$, "numval", $initializer.numval);
 	      Setattr($$,"throws",$cpp_const.throws);
@@ -4458,8 +4555,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
               }
               if ($auto_type_holder.qualifier)
                 Swig_error(cparse_file, cparse_line, "Function %s with a trailing return type cannot have a qualifier on 'auto'.\n", Swig_name_decl($$));
-              if ($declarator.explicit_object_parm)
-                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
+              if ($declarator.explicit_object_type)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier, $declarator.explicit_object_type);
 	      if (!$c_decl_tail) {
 		if (Len(scanner_ccode)) {
 		  String *code = Copy(scanner_ccode);
@@ -4554,8 +4651,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "throw", $cpp_const.throwf);
 	      Setattr($$, "noexcept", $cpp_const.nexcept);
 	      Setattr($$, "final", $cpp_const.final);
-              if ($declarator.explicit_object_parm)
-                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
+              if ($declarator.explicit_object_type)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier, $declarator.explicit_object_type);
 
 	      if ($declarator.id) {
 		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
@@ -4599,8 +4696,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$, "throw", $cpp_const.throwf);
 	      Setattr($$, "noexcept", $cpp_const.nexcept);
 	      Setattr($$, "final", $cpp_const.final);
-              if ($declarator.explicit_object_parm)
-                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier);
+              if ($declarator.explicit_object_type)
+                check_explicit_object_parameter($$, $storage_class, $cpp_const.qualifier, $cpp_const.refqualifier, $declarator.explicit_object_type);
 
 	      if ($declarator.id) {
 		/* Ignore all scoped declarations, could be 1. out of class function definition 2. friend function declaration 3. ... */
@@ -7050,6 +7147,16 @@ def_args       : EQUAL definetype {
 		 $$.val = NewString(scanner_ccode);
 		 $$.type = T_UNKNOWN;
 	       }
+               /* A new-expression, which the expression grammar does not parse, so its text is kept as it is. */
+               | EQUAL NEW_KW {
+                 String *code = skip_to_initializer_end();
+                 if (!code) Exit(EXIT_FAILURE);
+                 Swig_cparse_trim_whitespace(code);
+                 $$ = default_dtype;
+                 $$.val = NewStringf("new %s", code);
+                 $$.type = T_UNKNOWN;
+                 Delete(code);
+               }
                | %empty {
 		 $$ = default_dtype;
                  $$.type = T_UNKNOWN;
@@ -7091,11 +7198,9 @@ parameter_declarator : declarator def_args {
 
 plain_declarator : declarator {
                  $$ = $declarator;
-                 declarator_remove_locals_function(&$$);
             }
             | abstract_declarator {
               $$ = $abstract_declarator;
-              declarator_remove_locals_function(&$$);
             }
 	    /* Member function pointers with qualifiers. eg.
 	      int f(short (Funcs::*parm)(bool) const) */
@@ -7396,7 +7501,7 @@ notso_direct_declarator : idcolon {
                   }
                   | notso_direct_declarator[in] LPAREN fn_parms RPAREN {
                     $$ = $in;
-                    declarator_add_function(&$$, drop_explicit_object_parameter($fn_parms, &$$.explicit_object_parm), 0);
+                    declarator_add_function(&$$, drop_explicit_object_parameter($fn_parms, &$$.explicit_object_type), 0);
                   }
                   ;
 
@@ -7515,7 +7620,7 @@ direct_declarator : idcolon {
                    * the member function is wrapped with the arguments that follow it. */
                   | direct_declarator[in] LPAREN fn_parms RPAREN {
                     $$ = $in;
-                    declarator_add_function(&$$, drop_explicit_object_parameter($fn_parms, &$$.explicit_object_parm), 0);
+                    declarator_add_function(&$$, drop_explicit_object_parameter($fn_parms, &$$.explicit_object_type), 0);
                   }
                  /* User-defined string literals. eg.
                     int operator""_mySuffix(const char* val, int length) {...}
@@ -7827,7 +7932,10 @@ decltypeexpr   : expr RPAREN {
 		  * issue a warning.
 		  */
 		 $$ = 0;
-		 if (skip_balanced('(',')') < 0) Exit(EXIT_FAILURE);
+                 /* Error recovery discards tokens up to the first ')' it meets, which is the operand's own
+                  * closing parenthesis unless the operand had parentheses of its own, so only in the second case
+                  * is there a group left to close.  Skipping unconditionally ran to the end of input instead. */
+                 if (balanced_group_is_open('(', ')') && skip_balanced('(', ')') < 0) Exit(EXIT_FAILURE);
 		 Clear(scanner_ccode);
 	       }
 	       ;
@@ -9322,29 +9430,33 @@ idcolontailnt   : DCOLON identifier idcolontailnt[in] {
                ;
 
 /* Concatenated strings */
-string	       : string[in] STRING { 
+string	       : string[in] STRING {
 		   $$ = $in;
 		   Append($$, $STRING);
+		   append_literal_prefix($$, $STRING);
 		   Delete($STRING);
 	       }
 	       | STRING
-	       ; 
+	       ;
 wstring	       : wstring[in] WSTRING {
 		   // Concatenated wide strings: L"str1" L"str2"
 		   $$ = $in;
 		   Append($$, $WSTRING);
+		   append_literal_prefix($$, $WSTRING);
 		   Delete($WSTRING);
 	       }
 	       | wstring[in] STRING {
 		   // Concatenated wide string and normal string literal: L"str1" "str2" (C++11).
 		   $$ = $in;
 		   Append($$, $STRING);
+		   append_literal_prefix($$, $STRING);
 		   Delete($STRING);
 	       }
 	       | string[in] WSTRING {
 		   // Concatenated normal string and wide string literal: "str1" L"str2" (C++11).
 		   $$ = $in;
 		   Append($$, $WSTRING);
+		   append_literal_prefix($$, $WSTRING);
 		   Delete($WSTRING);
 	       }
 	       | WSTRING

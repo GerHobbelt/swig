@@ -68,17 +68,35 @@ static void add_parms(ParmList *p, List *patchlist, List *typelist, int is_patte
  * that is, template is expanded as: struct XABC : { X(A&,B&,C&); }
  * Note that there are no parameter names are in the expanded parameter list.
  * Nothing happens if the parameter list has no variadic parameters.
+ *
+ * A function template may declare more than one pack.  Explicitly written template arguments fill the first one
+ * entirely ([temp.arg.explicit]/9), leaving every later pack empty, so the parameter expanded from a later pack
+ * is dropped.  Those later packs are the variadic entries that follow 'unexpanded_variadic_parm' in the template
+ * parameter list it points into.  A pack of another template, such as a member template's own
+ * inside a class template, is left alone.
  * ----------------------------------------------------------------------------- */
 
 static void expand_variadic_parms(Node *n, const char *attribute, Parm *unexpanded_variadic_parm, ParmList *expanded_variadic_parms) {
-  ParmList *p = Getattr(n, attribute);
-  if (unexpanded_variadic_parm) {
+  Parm *pack;
+  for (pack = unexpanded_variadic_parm; pack; pack = nextSibling(pack)) {
+    ParmList *p = Getattr(n, attribute);
     int variadic_pos = 0;
-    Parm *variadic = ParmList_find_variadic_parm(p, &variadic_pos);
-    if (variadic) {
+    Parm *variadic;
+    if (!SwigType_isvariadic(Getattr(pack, "type")))
+      continue;
+    /* The parm expanding this pack, not just the first variadic one, which may belong to a member template */
+    for (variadic = p; variadic; variadic = nextSibling(variadic), ++variadic_pos) {
+      if (SwigType_variadic_expands(Getattr(variadic, "type"), Getattr(pack, "name")))
+        break;
+    }
+    if (!variadic)
+      continue;
+    if (pack != unexpanded_variadic_parm) {
+      Setattr(n, attribute, ParmList_replace_at(p, variadic_pos, 0));
+    } else {
       SwigType *type = Getattr(variadic, "type");
       String *name = Getattr(variadic, "name");
-      String *unexpanded_name = Getattr(unexpanded_variadic_parm, "name");
+      String *unexpanded_name = Getattr(pack, "name");
       ParmList *expanded = CopyParmList(expanded_variadic_parms);
       Parm *ep = expanded;
       int i = 0;
@@ -88,6 +106,10 @@ static void expand_variadic_parms(Node *n, const char *attribute, Parm *unexpand
         Replaceid(newtype, unexpanded_name, Getattr(ep, "type"));
         Setattr(ep, "type", newtype);
         Setattr(ep, "name", name ? NewStringf("%s%d", name, ++i) : 0);
+        /* The expanded parms are copies of the template arguments, which carry no file or line of their own,
+         * so take the declaration's - a diagnostic issued for one of these parms has nowhere else to point. */
+        Setfile(ep, Getfile(n));
+        Setline(ep, Getline(n));
         ep = nextSibling(ep);
       }
       /* Splice the expanded list into p in place of the variadic parm.  Function parameter
@@ -794,38 +816,6 @@ static void resolve_partial_args(SwigType *concrete, SwigType *partialtype, Parm
 }
 
 /* -----------------------------------------------------------------------------
- * abbreviated_pack_is_not_last()
- *
- * An abbreviated function template spells its template parameters as 'auto' in
- * the function parameter list, and SWIG invents a named template parameter for
- * each of them.  'name' is one of those invented names; this reports whether the
- * function parameter it was invented for is a pack with another parameter after
- * it, as in 'f(auto... values, int last)'.
- *
- * Such a pack is a non-deduced context, so the compiler cannot work out what it
- * holds from the call arguments: 'f(1, 2, 7)' leaves the pack empty, resolves
- * against 'f(int last)' and fails.  The generated call has to spell the pack's
- * template arguments out, as 'f<int, int>(1, 2, 7)', for the pack to hold them.
- * ----------------------------------------------------------------------------- */
-
-static int abbreviated_pack_is_not_last(Node *n, String *name) {
-  Parm *p;
-  if (!name)
-    return 0;
-  for (p = Getattr(n, "parms"); p; p = nextSibling(p)) {
-    SwigType *t = Getattr(p, "type");
-    if (t && SwigType_isvariadic(t)) {
-      String *base = SwigType_base(t);
-      int found = base && Equal(base, name);
-      Delete(base);
-      if (found)
-        return nextSibling(p) != 0;
-    }
-  }
-  return 0;
-}
-
-/* -----------------------------------------------------------------------------
  * rebuild_abbreviated_decl()
  *
  * A C++20 abbreviated function template is written with 'auto' where an explicitly
@@ -860,6 +850,32 @@ static void rebuild_abbreviated_decl(Node *n) {
 }
 
 /* -----------------------------------------------------------------------------
+ * explicit_template_argument_count()
+ *
+ * The number of a function template instantiation's template arguments that a call can write explicitly.
+ * Explicit arguments fill the template parameters in order and a parameter pack takes every one left, so a
+ * template parameter after the first pack can only be deduced from the call and its argument is left off.
+ *
+ * These make up the instantiation's name, which a directive matches, and the generated call.  The arguments
+ * of an abbreviated function template's invented parameters are written too, although they could be deduced,
+ * so that a directive names the instantiation as an explicitly written template's is named and the call
+ * reaches the specialization instantiated rather than one deduction picks, such as 'f<const int>'.
+ * ----------------------------------------------------------------------------- */
+
+static int explicit_template_argument_count(ParmList *templateparms, ParmList *tparms) {
+  int later_singles = 0;
+  int seen_pack = 0;
+  Parm *p;
+  for (p = templateparms; p; p = nextSibling(p)) {
+    if (SwigType_isvariadic(Getattr(p, "type")))
+      seen_pack = 1;
+    else if (seen_pack)
+      ++later_singles;
+  }
+  return ParmList_len(tparms) - later_singles;
+}
+
+/* -----------------------------------------------------------------------------
  * Swig_cparse_template_expand()
  * ----------------------------------------------------------------------------- */
 
@@ -880,57 +896,12 @@ int Swig_cparse_template_expand(Node *n, String *rname, ParmList *tparms, Symtab
   rebuild_abbreviated_decl(n);
 
   templateargs = NewStringEmpty();
-  /* Drop from the emitted C++ template-argument list every argument the compiler deduces for itself.  The
-   * invented type template parameters introduced by C++20 abbreviated 'auto' parms ([dcl.fct]/19) are appended
-   * after the explicit parms, and the wrapper signature has concrete types in place of each 'auto', so the
-   * compiler deduces an invented parm's argument from the call and emitting it explicitly is at best redundant.
-   *
-   * The one invented parm whose argument is not deduced is a parameter pack that another function parameter
-   * follows: such a pack is a non-deduced context and would be left empty, so its arguments have to be spelt out
-   * for the call to have the number of parameters the wrapper passes.  Everything after that pack is deduced.
-   * Note this is decided from the function parameter list, not the template parameter list: a plain parameter
-   * after the pack, as in 'f(auto... values, int last)', invents no template parameter and is invisible there. */
-  {
-    int trailing_invented = 0;
-    int last_invented_pack = -1;
-    int last_undeduced_pack = -1;
-    int index = 0;
-    int total = ParmList_len(templateparms);
-    Parm *p;
-    for (p = templateparms; p; p = nextSibling(p), ++index) {
-      if (GetFlag(p, "abbreviated_auto")) {
-        ++trailing_invented;
-        if (SwigType_isvariadic(Getattr(p, "type"))) {
-          last_invented_pack = index;
-          if (abbreviated_pack_is_not_last(n, Getattr(p, "name")))
-            last_undeduced_pack = index;
-        }
-      } else {
-        trailing_invented = 0;
-        last_invented_pack = -1;
-        last_undeduced_pack = -1;
-      }
-    }
-    if (trailing_invented > 0) {
-      int emit_count;
-      if (last_undeduced_pack >= 0) {
-        /* Emit up to and including the arguments the pack absorbs.  Each later template parameter takes one argument, the count to drop from the end. */
-        emit_count = ParmList_len(tparms) - (total - 1 - last_undeduced_pack);
-      } else if (last_invented_pack >= 0) {
-        /* A deduced invented pack absorbs every remaining template argument, so all of them are dropped rather
-         * than one per invented parameter, which is all an unexpanded invented parm takes. */
-        emit_count = total - trailing_invented;
-      } else {
-        emit_count = ParmList_len(tparms) - trailing_invented;
-      }
-      {
-        ParmList *emit_parms = CopyParmListMax(tparms, emit_count);
-        SwigType_add_template(templateargs, emit_parms);
-        Delete(emit_parms);
-      }
-    } else {
-      SwigType_add_template(templateargs, tparms);
-    }
+  if (Equal(Getattr(n, "templatetype"), "cdecl") && SwigType_isfunction(Getattr(n, "decl"))) {
+    ParmList *emit_parms = CopyParmListMax(tparms, explicit_template_argument_count(templateparms, tparms));
+    SwigType_add_template(templateargs, emit_parms);
+    Delete(emit_parms);
+  } else {
+    SwigType_add_template(templateargs, tparms);
   }
 
   tname = Copy(Getattr(n, "name"));
@@ -977,7 +948,18 @@ int Swig_cparse_template_expand(Node *n, String *rname, ParmList *tparms, Symtab
     int variadic_pos = 0;
     unexpanded_variadic_parm = ParmList_find_variadic_parm(templateparmsraw, &variadic_pos);
     if (unexpanded_variadic_parm) {
-      int absorbed = ParmList_len(templateparms) - ParmList_len(templateparmsraw) + 1;
+      /* Explicitly written template arguments fill the first pack entirely ([temp.arg.explicit]/9) and leave
+       * every later pack empty, so what the first absorbs is whatever the parms taking one argument each do not.
+       * Counting those rather than subtracting the length of the list is what makes a second pack come out empty
+       * instead of one argument short. */
+      int fixed_parms = 0;
+      int absorbed;
+      Parm *rp;
+      for (rp = templateparmsraw; rp; rp = nextSibling(rp)) {
+        if (!SwigType_isvariadic(Getattr(rp, "type")))
+          ++fixed_parms;
+      }
+      absorbed = ParmList_len(templateparms) - fixed_parms;
       Parm *slice = ParmList_nth_parm(templateparms, variadic_pos);
       expanded_variadic_parms = CopyParmListMax(slice, absorbed);
     }

@@ -24,6 +24,7 @@ extern int cparse_start_line;
 
 struct Scanner {
   String *text;   /* Current token value */
+  String *prefix; /* Encoding prefix of the string or character literal just scanned, empty when it had none */
   List *scanobjs; /* Objects being scanned */
   String *str;    /* Current object being scanned */
   char *idstart;  /* Optional identifier start characters */
@@ -63,6 +64,7 @@ Scanner *NewScanner(void) {
   s->idstart = NULL;
   s->scanobjs = NewList();
   s->text = NewStringEmpty();
+  s->prefix = NewStringEmpty();
   s->str = 0;
   s->error = 0;
   s->error_line = 0;
@@ -83,6 +85,7 @@ void DelScanner(Scanner *s) {
   Delete(s->scanobjs);
   Delete(s->brackets);
   Delete(s->text);
+  Delete(s->prefix);
   Delete(s->error);
   Delete(s->str);
   Free(s->idstart);
@@ -508,6 +511,14 @@ static void get_escape(Scanner *s) {
   return;
 }
 
+/* Record the encoding prefix of the string or character literal whose opening quote has just been read, which is
+   whatever of the token text comes before that quote: empty for "text", L for L"text", u8R for u8R"(text)". */
+static void save_literal_prefix(Scanner *s) {
+  Clear(s->prefix);
+  Append(s->prefix, s->text);
+  Delitem(s->prefix, DOH_END);
+}
+
 /* -----------------------------------------------------------------------------
  * look()
  *
@@ -618,9 +629,11 @@ static int look(Scanner *s) {
       else if (c == '\"') {
         state = 2; /* A string constant */
         s->start_line = s->line;
+        save_literal_prefix(s);
         Clear(s->text);
       } else if (c == '\'') {
         s->start_line = s->line;
+        save_literal_prefix(s);
         Clear(s->text);
         state = 9; /* A character constant */
       }
@@ -1043,10 +1056,12 @@ static int look(Scanner *s) {
         return SWIG_TOKEN_ID;
       else if (c == '\"') {
         s->start_line = s->line;
+        save_literal_prefix(s);
         Clear(s->text);
         state = 78;
       } else if (c == '\'') {
         s->start_line = s->line;
+        save_literal_prefix(s);
         Clear(s->text);
         state = 79;
       } else if (isalnum(c) || (c == '_') || (c == '$'))
@@ -1507,6 +1522,16 @@ String *Scanner_text(Scanner *s) {
 }
 
 /* -----------------------------------------------------------------------------
+ * Scanner_literal_prefix()
+ *
+ * Return the encoding prefix of the string or character literal last returned.
+ * ----------------------------------------------------------------------------- */
+
+String *Scanner_literal_prefix(Scanner *s) {
+  return s->prefix;
+}
+
+/* -----------------------------------------------------------------------------
  * Scanner_skip_line()
  *
  * Skips to the end of a line
@@ -1743,6 +1768,72 @@ String *Scanner_get_raw_text_to_semicolon(Scanner *s) {
 
   lookahead_end(s, lookahead, start);
 
+  return result;
+}
+
+/* -----------------------------------------------------------------------------
+ * Scanner_skip_to_initializer_end()
+ *
+ * Skips the rest of an initializer or default argument, up to but not including the ',' or ';' that ends it or the
+ * ')' that closes the parameter list, and returns the raw text skipped.  One nested inside '(...)', '[...]' or '{...}'
+ * does not count, and nor does a ',' between the '<' and '>' of a template argument list.  The '<' and '>' are only
+ * counted outside the other brackets, where they cannot be comparison operators within the type of a new-expression,
+ * which is what this is for.  Each comment is replaced by a space in the text returned, and a locator comment the
+ * preprocessor put round a macro expansion is passed to Scanner_locator(), as it is when the text is parsed, so that
+ * line numbering resumes after the macro.  The token that ends the text is pushed back so that it is the next token.
+ * Returns NULL if the end of the text is reached first.
+ * ----------------------------------------------------------------------------- */
+
+String *Scanner_skip_to_initializer_end(Scanner *s) {
+  String *result;
+  long position; /* the start of the text not yet copied to 'result' */
+  int num_levels = 0;
+  int num_angles = 0;
+  int tok;
+
+  if (!s->str)
+    return NULL;
+  position = Tell(s->str);
+  result = NewStringEmpty();
+
+  while (1) {
+    long previous_end = Tell(s->str);
+    int delta;
+    tok = Scanner_token(s);
+    delta = Scanner_bracket_depth_delta(tok);
+    if (tok <= 0) {
+      Delete(result);
+      return NULL;
+    } else if (tok == SWIG_TOKEN_COMMENT) {
+      String *text = Scanner_text(s);
+      char *loc = Char(text);
+      Write(result, Char(s->str) + position, (int)(previous_end - position));
+      Putc(' ', result);
+      position = Tell(s->str);
+      if (strncmp(loc, "/*@SWIG", 7) == 0 && loc[Len(text) - 3] == '@')
+        Scanner_locator(s, text);
+    } else if (tok == SWIG_TOKEN_RPAREN && num_levels == 0) {
+      break;
+    } else if (delta) {
+      num_levels += delta;
+    } else if (num_levels == 0 && tok == SWIG_TOKEN_LESSTHAN) {
+      num_angles++;
+    } else if (num_levels == 0 && tok == SWIG_TOKEN_GREATERTHAN && num_angles > 0) {
+      num_angles--;
+    } else if (num_levels == 0 && tok == SWIG_TOKEN_RSHIFT && num_angles > 0) {
+      num_angles = num_angles > 1 ? num_angles - 2 : 0;
+    } else if (tok == SWIG_TOKEN_SEMI && num_levels == 0) {
+      break;
+    } else if (tok == SWIG_TOKEN_COMMA && num_levels == 0 && num_angles == 0) {
+      break;
+    }
+  }
+
+  /* The token ending the text is one character and Tell() is just past it, so it is left out of the text. */
+  Write(result, Char(s->str) + position, (int)(Tell(s->str) - 1 - position));
+  Setfile(result, Getfile(s->str));
+  Setline(result, s->line);
+  Scanner_pushtoken(s, tok, Scanner_text(s));
   return result;
 }
 
