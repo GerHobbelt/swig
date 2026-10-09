@@ -2211,14 +2211,41 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 static const struct Decl default_decl;
 static const struct Define default_dtype;
 
-/* Look 'name' up in the symbol table and return a copy of the type it was declared with, with its declarator
-   applied, so that the 'pg' of 'int *pg;' gives 'p.int' and not just the 'int' held in the "type" attribute.
-   Returns 0 when the name is not in scope. */
+/* The parameters of the function whose trailing return type is being parsed, or 0 while no trailing return type
+   is being parsed.  The parameters are in scope in the trailing return type, so they have to be looked up before
+   the symbol table is, which is what makes 'auto f(int value) -> decltype(value)' return 'int' whatever else the
+   name 'value' denotes outside the function.  The list is owned by the declarator and only borrowed here for as
+   long as the trailing return type is being reduced. */
+static ParmList *trailing_rettype_parms = 0;
+
+/* A copy of the type of the function parameter named 'name' in the parameter list of the function whose trailing
+   return type is being parsed, or 0 when there is no such parameter.  A parameter declared with an 'auto'
+   placeholder is passed over: it is a C++20 abbreviated function template parameter, which is turned into an
+   invented template parameter only once the whole declaration has been reduced, so the placeholder is not yet
+   the name of anything a return type can be spelled with. */
+static SwigType *trailing_rettype_parm_type(String *name) {
+  Parm *p;
+  for (p = trailing_rettype_parms; p; p = nextSibling(p)) {
+    String *pname = Getattr(p, "name");
+    SwigType *ptype = Getattr(p, "type");
+    if (pname && ptype && Equal(pname, name))
+      return SwigType_isauto(ptype) ? 0 : Copy(ptype);
+  }
+  return 0;
+}
+
+/* Look 'name' up as a function parameter of a trailing return type being parsed, then in the symbol table, and
+   return a copy of the type it was declared with, with its declarator applied, so that the 'pg' of 'int *pg;'
+   gives 'p.int' and not just the 'int' held in the "type" attribute.  Returns 0 when the name is not in scope. */
 static SwigType *symbol_full_type(String *name) {
-  Node *n = Swig_symbol_clookup(name, 0);
+  Node *n;
   SwigType *type;
   SwigType *decl;
   String *storage;
+  type = trailing_rettype_parm_type(name);
+  if (type)
+    return type;
+  n = Swig_symbol_clookup(name, 0);
   if (!n)
     return 0;
   if (Equal(nodeType(n), "enumitem")) {
@@ -2242,23 +2269,24 @@ static SwigType *symbol_full_type(String *name) {
   return type;
 }
 
-/* C++ decltype/auto type deduction.  Returns a new type, or 0 when the expression is not one a type can be
-   deduced from. */
-static SwigType *deduce_type(const struct Define *dtype) {
-  SwigType *deduced;
-  if (!dtype->val)
-    return 0;
-  deduced = symbol_full_type(dtype->val);
+/* The type of the expression whose text is 'val' and whose T_* summary code is 'type_code'.  Returns a new type,
+   or 0 when the expression is not one a type can be deduced from. */
+static SwigType *deduce_type_from_value(String *val, int type_code) {
+  SwigType *deduced = symbol_full_type(val);
   if (deduced) {
-    /* The name of a function is not something a variable or a decltype can be deduced from. */
-    if (!SwigType_isfunction(deduced))
-      return deduced;
-    Delete(deduced);
-  } else if (Len(dtype->val) > 1 && *Char(dtype->val) == '&') {
+    /* The name of a function is not something a variable or a decltype can be deduced from.  The summary code
+     * is the code of the function's return type, so it is not an answer here either. */
+    if (SwigType_isfunction(deduced)) {
+      Delete(deduced);
+      return 0;
+    }
+    return deduced;
+  }
+  if (Len(val) > 1 && *Char(val) == '&') {
     /* The address of something in scope, such as the '&g' in 'auto p = &g;', is a pointer to the type of that
      * something.  The unary '&' rule spells the value '&' followed by its operand.  The operand may be a
      * function here, giving a function pointer. */
-    String *operand = NewString(Char(dtype->val) + 1);
+    String *operand = NewString(Char(val) + 1);
     deduced = symbol_full_type(operand);
     Delete(operand);
     if (deduced) {
@@ -2266,14 +2294,52 @@ static SwigType *deduce_type(const struct Define *dtype) {
       return deduced;
     }
   }
-  if (dtype->type != T_AUTO && dtype->type != T_UNKNOWN) {
-    /* Try to deduce the type from the T_* type code. */
-    deduced = NewSwigType(dtype->type);
+  if (type_code != T_AUTO && type_code != T_UNKNOWN) {
+    /* Try to deduce the type from the T_* type code.  The code summarises a type rather than describing it, so
+     * it only answers for the types NewSwigType() rebuilds, the fundamental ones. */
+    deduced = NewSwigType(type_code);
     if (Len(deduced) > 0)
       return deduced;
     Delete(deduced);
   }
   return 0;
+}
+
+/* C++ decltype/auto type deduction.  Returns a new type, or 0 when the expression is not one a type can be
+   deduced from.  'unwrap_parentheses' says whether parentheses around the whole expression can be ignored, which
+   they can for the type an 'auto' variable deduces but not for the type a decltype names. */
+static SwigType *deduce_type(const struct Define *dtype, int unwrap_parentheses) {
+  SwigType *deduced;
+  String *unwrapped;
+  if (!dtype->val)
+    return 0;
+  if (!unwrap_parentheses)
+    return deduce_type_from_value(dtype->val, dtype->type);
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  deduced = deduce_type_from_value(unwrapped ? unwrapped : dtype->val, dtype->type);
+  Delete(unwrapped);
+  return deduced;
+}
+
+/* Whether the initialiser 'dtype' is a parenthesised name of something in scope, such as the '(object)' of
+   'decltype(auto) r = (object);'.  The decltype of a parenthesised id-expression is an lvalue reference to the
+   object the name denotes, and the reference is not part of what the name was declared with, so a type deduced
+   from the name alone would be missing it. */
+static int initialiser_is_parenthesised_name(const struct Define *dtype) {
+  int parenthesised_name = 0;
+  String *unwrapped;
+  if (!dtype->val)
+    return 0;
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  if (unwrapped) {
+    SwigType *named = symbol_full_type(unwrapped);
+    if (named) {
+      parenthesised_name = 1;
+      Delete(named);
+    }
+    Delete(unwrapped);
+  }
+  return parenthesised_name;
 }
 
 /* Deduce the type the 'auto' placeholder stands for in a variable declaration, given 'initialiser_type', the type
@@ -2318,6 +2384,24 @@ static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *d
   return placeholder;
 }
 
+/* Whether the initialiser 'dtype' is a string literal, which is what the text of its value starting with a quote
+   says.  The T_STRING code on its own does not say it: a named cast to 'const char *' summarises to T_STRING too,
+   as does the address of a character. */
+static int initialiser_is_string_literal(const struct Define *dtype) {
+  const char *text;
+  if (dtype->type != T_STRING && dtype->type != T_WSTRING)
+    return 0;
+  if (!dtype->val)
+    return 0;
+  text = Char(dtype->val);
+  /* The value text of a string literal is written by the grammar as '"..."', or as 'L"..."' when the literal
+     is wide, whichever of the encoding and raw string prefixes the source spelt it with, so 'L' is the only
+     prefix that can appear here. */
+  if (*text == 'L')
+    text++;
+  return *text == '"';
+}
+
 /* The type of an 'auto' variable declared with declarator 'decl' and initialised by 'dtype', which is the type
    deduced from the initialiser with the declarator decoration removed and the placeholder's own cv-qualifier
    added back.  Returns 0 when the initialiser is not one a type can be deduced from.  A function declarator makes
@@ -2325,7 +2409,22 @@ static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *d
    then nothing to deduce it from. */
 static SwigType *auto_variable_type(const struct Define *dtype, SwigType *decl, String *qualifier, int isdecltypeauto) {
   SwigType *type = 0;
-  SwigType *initialiser_type = SwigType_isfunction(decl) ? 0 : deduce_type(dtype);
+  SwigType *initialiser_type;
+
+  if (isdecltypeauto && initialiser_is_string_literal(dtype)) {
+    /* A string literal is an lvalue of array type, so 'decltype(auto) s = "text";' declares a reference to an
+     * array of characters and not the 'const char *' that ordinary 'auto' deduces.  The grammar writes the
+     * value text with at most an 'L' prefix, so which character type the literal has is no longer there to
+     * read and the type cannot be named, and no type is deduced. */
+    return 0;
+  }
+  if (isdecltypeauto && initialiser_is_parenthesised_name(dtype)) {
+    /* Likewise 'decltype(auto) r = (object);' declares a reference to the object, which the name it is
+     * parenthesising was not declared with, so no type is deduced rather than the type without the reference. */
+    return 0;
+  }
+
+  initialiser_type = SwigType_isfunction(decl) ? 0 : deduce_type(dtype, !isdecltypeauto);
 
   if (initialiser_type) {
     if (isdecltypeauto) {
@@ -2366,8 +2465,8 @@ static int auto_types_differ(SwigType *type1, SwigType *type2) {
    initialiser.  A declarator that deduces a different type to the declaration is marked so that add_symbols() can
    report the inconsistency; it keeps the type its own initialiser deduced, which is the best guess available.
 
-   The declarators after the first are read back from the parse tree, which holds the text of the initialiser but
-   not the value the grammar evaluated for it, so a type is deduced from a name or a single literal only. */
+   The declarators after the first are read back from the parse tree, which holds the text of the initialiser and
+   the type code the grammar evaluated for it, so each initialiser deduces exactly what it would as the first. */
 static void set_auto_variable_types(Node *first, const struct Define *first_dtype, String *qualifier, String *conceptid, int isdecltypeauto) {
   SwigType *declaration_type = 0;
   Node *n;
@@ -2379,8 +2478,7 @@ static void set_auto_variable_types(Node *first, const struct Define *first_dtyp
       dtype = *first_dtype;
     } else {
       dtype.val = Getattr(n, "value");
-      if (dtype.val)
-        dtype.type = literal_type_code(dtype.val);
+      dtype.type = GetInt(n, "initialisertypecode");
     }
     type = auto_variable_type(&dtype, Getattr(n, "decl"), qualifier, isdecltypeauto);
     if (type) {
@@ -3715,38 +3813,6 @@ template_directive: SWIGTEMPLATE LPAREN idstringopt RPAREN idcolonnt LESSTHAN va
 			  }
                           add_symbols_copy(templnode);
 
-                          /* Warning 332 (WARN_PARSE_TEMPLATE_TYPE_CONSTRAINT_UNDEF) for any C++20 type-constraint in the
-                           * template whose concept-id SWIG could not resolve during earlier parsing is intentionally
-                           * disabled below.  SWIG's template substitution machinery (templ.c) is name based: a
-                           * templateparm's name is replaced throughout the body by the valparm's value/type regardless
-                           * of whether the templateparm was classified as 'typename T' or as a non-type parm.  The
-                           * 'constraint:unresolved' remap of 'Concept T' to 'typename T' therefore has no observable
-                           * effect on the generated wrapper. The warning would just result in unnecessary warnings about
-                           * any missing typedef info for NNTP parameters, that wouldn't make any difference to the generated
-                           * code if addressed.
-                           *
-                          {
-                            Parm *tp = Getattr(nn, "templateparms");
-                            SWIG_WARN_NODE_BEGIN(templnode);
-                            while (tp) {
-                              if (GetFlag(tp, "constraint:unresolved")) {
-                                Node *atom = Getattr(tp, "constraint");
-                                String *concept_name = atom ? Getattr(atom, "type") : 0;
-                                concept_name = concept_name ? Copy(concept_name) : NewString("<unknown>");
-                                Swig_warning(WARN_PARSE_TEMPLATE_TYPE_CONSTRAINT_UNDEF, cparse_file, cparse_line,
-                                             "In instantiation of template '%s' with name '%s',\n",
-                                             Swig_name_str(templnode), Getattr(templnode, "sym:name"));
-                                Swig_warning(WARN_PARSE_TEMPLATE_TYPE_CONSTRAINT_UNDEF, Getfile(nn), Getline(nn),
-                                             "nothing known about type-constraint '%s' - treated as 'typename'.\n",
-                                             SwigType_str(concept_name, 0));
-                                Delete(concept_name);
-                              }
-                              tp = nextSibling(tp);
-                            }
-                            SWIG_WARN_NODE_END(templnode);
-                          }
-                          */
-
 			  if (Equal(nodeType(templnode), "classforward") && !(GetFlag(templnode, "feature:ignore") || GetFlag(templnode, "hidden"))) {
 			    SWIG_WARN_NODE_BEGIN(templnode);
 			    /* A full template class definition is required in order to wrap a template class as a proxy class so this %template is ineffective. */
@@ -4141,7 +4207,13 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
             * placeholder is not valid C++ here, the declared type has to be the placeholder on its own.
             * The trailing requires-clause comes after the trailing return type, that being the end of the
             * declarator, and is conjoined with any type-constraint on the placeholder. */
-           | storage_class auto_type_holder declarator cpp_const ARROW trailing_rettype virt_specifier_seq_opt requires_clause_opt initializer c_decl_tail {
+           | storage_class auto_type_holder declarator cpp_const ARROW {
+              /* The function parameters are in scope in the trailing return type, so make them visible to any
+               * decltype in it for as long as it is being reduced. */
+              trailing_rettype_parms = $declarator.parms;
+             } trailing_rettype {
+              trailing_rettype_parms = 0;
+             } virt_specifier_seq_opt requires_clause_opt initializer c_decl_tail {
               $$ = new_node("cdecl");
 	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$,"refqualifier",$cpp_const.refqualifier);
@@ -4437,6 +4509,15 @@ c_decl_list_tail : COMMA declarator cpp_const initializer c_decl_tail[in] {
 		 Setattr($$,"value",$initializer.val);
 		 if ($initializer.stringval) Setattr($$, "stringval", $initializer.stringval);
 		 if ($initializer.numval) Setattr($$, "numval", $initializer.numval);
+                 {
+                   /* The type code the grammar evaluated for the initialiser.  The parse tree holds the text of an
+                    * initialiser but not its value, and reading a type back out of the text recognises a single
+                    * literal only, so a C++11 'auto' declaration declaring more than one variable reads the code
+                    * from here to deduce from this declarator's own initialiser the way it deduces from the first. */
+                   String *typecode = NewStringf("%d", $initializer.type);
+                   Setattr($$, "initialisertypecode", typecode);
+                   Delete(typecode);
+                 }
 		 Setattr($$,"throws",$cpp_const.throws);
 		 Setattr($$,"throw",$cpp_const.throwf);
 		 Setattr($$,"noexcept",$cpp_const.nexcept);
@@ -7520,7 +7601,7 @@ decltype       : decltype_prefix[expr] decltypeexpr {
 	       ;
 
 decltypeexpr   : expr RPAREN {
-		 $$ = deduce_type(&$expr);
+                 $$ = deduce_type(&$expr, 0);
 	       }
 	       | error RPAREN {
 		 /* Avoid a parse error if we can't parse the expression

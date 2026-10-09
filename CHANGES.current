@@ -7,6 +7,96 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-01: olly
+	    [Guile] Typemaps handling std::string no longer truncate strings at
+	    an embedded null character.
+
+2026-10-01: olly
+	    [Guile] Remove non-functional `cplusplus.i` from library.  This defines
+	    typemaps with a language name, which we stopped supporting in SWIG 4.1.0
+	    after deprecating it about 20 years ago.
+
+	    `cplusplus.i` defined some typemaps for std::string (use
+	    `std_string.i` instead) and some for std::complex which I've moved
+	    to new library files `complex.i` and `std_complex.i`.
+
+2026-09-12: wsfulton
+            Parentheses around the initialiser of an 'auto' variable no longer
+            change the type deduced for it:
+
+              int *pointer;
+              auto copy = (pointer);
+
+            'copy' is now an 'int *' as C++ says. It used to be wrapped as an
+            'int', with no warning and a wrapper that did not compile.
+
+            The name of a function is no longer deduced from at all:
+
+              int func();
+              auto called = func;
+
+            'called' used to be wrapped as an 'int', again with no warning. It
+            is now ignored with warning 346.
+
+            A 'decltype(auto)' variable initialised by a parenthesised name is
+            ignored with warning 346 as well, the parentheses making it a
+            reference to what the name denotes:
+
+              decltype(auto) alias = (pointer);
+
+2026-09-12: wsfulton
+            A C++11 'auto' declaration declaring more than one variable now
+            deduces the type from any of its declarators and not just from
+            those whose initialiser is a name or a single literal:
+
+              int get_int();
+              auto first = get_int(), second = 1 + 2;
+
+            C++ deduces one type for the whole declaration, so both variables
+            are int. Both used to be ignored with warning 346, while writing
+            the same declarators the other way round wrapped both.
+
+2026-09-12: wsfulton
+            A 'decltype(auto)' variable initialised by a string literal is now
+            ignored with warning 346 instead of being wrapped:
+
+              decltype(auto) text = "abc";
+
+            A string literal is an lvalue of array type, so the variable is a
+            reference to an array of characters and not the 'const char *' that
+            ordinary 'auto' deduces. It used to be wrapped as the pointer, and
+            the generated setter assigned to the reference and did not compile.
+
+2026-09-12: wsfulton
+            A function parameter is now in scope in a trailing return type, so
+            a decltype there names the parameter rather than whatever else the
+            name denotes outside the function:
+
+              double value;
+              auto shadow(int value) -> decltype(value);   // returns int
+              auto square(float input) -> decltype(input); // returns float
+
+            The first function used to be wrapped as returning double, with no
+            warning, and the second reported warning 344 and generated a
+            wrapper that did not compile.
+
+2026-09-12: wsfulton
+            Correct documentation inconsistencies in the warnings that SWIG
+            emits. The list of warnings in the Warnings chapter of the manual
+            has been checked against the messages in the source: incorrect
+            message text has been corrected, warning numbers that were never
+            documented have been added, and numbers that can no longer be
+            issued have been removed.
+
+            Two messages were themselves wrong and have been fixed. Warning
+            385 reported "operator-- ignored" for a comma operator, and the
+            D warning 710 contained a non-ASCII dash.
+
+            Two messages were issued with an unrelated warning number. A
+            missing Go typemap is now reported as warning 465 rather than
+            507, and a value given to the doxygen:ignore feature is now
+            reported as the new warning 567 rather than 206.
+
 2026-09-11: wsfulton
             [Python] #3528 The .pyi stub file now declares the module scope functions that are
             declared inside a class, such as a friend function or a renamed constructor. These
