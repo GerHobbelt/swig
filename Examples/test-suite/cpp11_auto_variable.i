@@ -37,10 +37,8 @@ static constexpr auto NOEXCEPT_FUNC = noexcept(func);
 
 %}
 
-// The address of a variable in scope deduces to a pointer to that variable's type.  A setter for a
-// pointer variable is not what is under test here, so they are read only.
-%immutable ptr_t;
-%immutable ptr_zero;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) ptr_t;
+%warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) ptr_zero;
 
 %inline %{
 static auto ptr_t = &t;                    // bool *
@@ -50,8 +48,6 @@ static constexpr auto ptr_one = &one;      // const int *
 static const auto const_ptr_zero = &zero;  // int *const
 %}
 
-// A named cast deduces the type it casts to when that is a built in type.  Setting a
-// const char * variable copies the new string and leaks the old one, hence warning 451.
 %warnfilter(SWIGWARN_TYPEMAP_CHARLEAK) cast_constcharptr;
 
 %{
@@ -111,6 +107,21 @@ static auto paren_nested = ((one));
 // was added in C++11.
 static auto wstring_lit_len1 = sizeof(L"123" "456") / sizeof(wchar_t) - 1;
 static auto wstring_lit_len2 = sizeof("123" L"456") / sizeof(wchar_t) - 1;
+%}
+
+%inline %{
+// A unary '+' or '-' applies the integral promotion, so every integral type narrower
+// than int deduces int.
+static short short_value = 1;
+static unsigned short ushort_value = 1;
+static char char_value = 1;
+static bool bool_value = true;
+
+static auto promoted_short = +short_value;
+static auto promoted_ushort = +ushort_value;
+static auto negated_short = -short_value;
+static auto promoted_char = +char_value;
+static auto promoted_bool = +bool_value;
 %}
 
 %inline %{

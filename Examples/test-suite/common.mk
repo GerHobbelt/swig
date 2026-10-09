@@ -739,6 +739,7 @@ CPP17_TEST_CASES += \
 	cpp17_inheriting_constructors_pack \
 	cpp17_map_no_default_ctor \
 	cpp17_nested_namespaces \
+	cpp17_noexcept_function_type_alias \
 	cpp17_nspace_nested_namespaces \
 	cpp17_string_view \
 	cpp17_structured_bindings \
@@ -760,12 +761,14 @@ CPP20_TEST_CASES += \
 	cpp20_concepts_class_methods \
 	cpp20_concepts_classes \
 	cpp20_concepts_constrained_param \
+	cpp20_concepts_directors \
 	cpp20_concepts_extra \
 	cpp20_concepts_lambda \
 	cpp20_concepts_overloads \
 	cpp20_constexpr_destructor \
 	cpp20_lambda_template \
 	cpp20_spaceship_operator \
+	cpp20_structured_bindings \
 	cpp20_variable_templates \
 
 # Broken C++20 test cases.

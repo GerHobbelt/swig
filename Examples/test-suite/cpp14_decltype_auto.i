@@ -3,16 +3,16 @@
 // of the initialiser exactly, keeping any reference.
 %module cpp14_decltype_auto
 
-// A deduced return type cannot be deduced from the body, which SWIG does not analyse, so each of
-// these is ignored with warning 345.
+// A deduced return type cannot be deduced from the body, which SWIG does not analyse
 %warnfilter(SWIGWARN_CPP14_AUTO) ret_plain;
 %warnfilter(SWIGWARN_CPP14_AUTO) ret_trailing;
 %warnfilter(SWIGWARN_CPP14_AUTO) Klass::mem;
 %warnfilter(SWIGWARN_CPP14_AUTO) Klass::operator decltype(auto)();
 
+%rename(convert) KlassMyDecltype::operator mydecltype;
+
 %warnfilter(SWIGWARN_CPP11_LAMBDA) lambda_dauto;
 
-// The deduced reference variables are settable, which is what warning 454 is about.
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) var_ref;
 %warnfilter(SWIGWARN_TYPEMAP_SWIGTYPELEAK) global_ref;
 
@@ -28,6 +28,11 @@
 %warnfilter(SWIGWARN_CPP11_AUTO) var_string_raw_utf8;
 %warnfilter(SWIGWARN_CPP11_AUTO) var_string_raw_char16;
 %warnfilter(SWIGWARN_CPP11_AUTO) var_string_raw_char32;
+%warnfilter(SWIGWARN_CPP11_AUTO) var_string_concat;
+%warnfilter(SWIGWARN_CPP11_AUTO) var_string_parens;
+
+// An operator applied to a string literal makes an expression, and this one has type 'const char *'.
+%warnfilter(SWIGWARN_TYPEMAP_CHARLEAK) var_string_expr;
 
 %warnfilter(SWIGWARN_CPP11_AUTO) var_parenthesised;
 
@@ -55,6 +60,14 @@ decltype(auto) var_string_raw_utf8 = u8R"(text)";
 decltype(auto) var_string_raw_char16 = uR"(text)";
 decltype(auto) var_string_raw_char32 = UR"(text)";
 
+// Adjacent literals concatenate into one literal, and parentheses do not change what a literal is.
+decltype(auto) var_string_concat = "te" "xt";
+decltype(auto) var_string_parens = ("text");
+
+// An operator applied to a literal makes an expression, whose type is deduced as usual.
+bool use_ext = true;
+decltype(auto) var_string_expr = use_ext ? "ext" : "none";
+
 // A parenthesised name declares a reference to what it names, which the name was not declared with
 decltype(auto) var_parenthesised = (global_int);
 
@@ -73,6 +86,16 @@ struct Klass {
   operator decltype(auto)() { return v; }
 
   int plain() const { return v; }
+};
+
+// A user defined type whose name merely ends in 'decltype' is not the keyword, so this is an ordinary
+// conversion function and the %rename above names it.
+struct mydecltype {
+  int value;
+};
+
+struct KlassMyDecltype {
+  operator mydecltype() const { mydecltype m; m.value = 13; return m; }
 };
 
 // A lambda is wrapped as an opaque object whatever its return type is spelt as.

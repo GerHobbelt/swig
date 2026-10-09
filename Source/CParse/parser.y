@@ -304,11 +304,6 @@ int SWIG_cparse_template_reduce(int treduce) {
  *                           Assist functions
  * ----------------------------------------------------------------------------- */
 
-static int promote_type(int t) {
-  if (t <= T_UCHAR || t == T_CHAR || t == T_WCHAR) return T_INT;
-  return t;
-}
-
 /* Perform type-promotion for binary operators */
 static int promote(int t1, int t2) {
   t1 = promote_type(t1);
@@ -512,12 +507,14 @@ static SwigType *auto_type_holder_type(String *qualifier, String *conceptid) {
 }
 
 /* Attach a C++20 type-constraint to node 'n' as a 'concept-id' atom on the 'constraint' attribute, for downstream
- * inspection.  Does nothing when the placeholder was unconstrained. */
+ * inspection.  Does nothing when the placeholder was unconstrained.  A constraint already on the node, such as the
+ * one a requires-clause put there, is kept and the type-constraint conjoined with it. */
 static void set_concept_constraint(Node *n, String *conceptid) {
   if (conceptid) {
     Node *atom = Constraint_new_atom("concept-id");
+    Node *existing = Getattr(n, "constraint");
     Setattr(atom, "type", conceptid);
-    Setattr(n, "constraint", atom);
+    Setattr(n, "constraint", existing ? Constraint_combine("and", atom, existing) : atom);
   }
 }
 
@@ -535,8 +532,10 @@ static void set_auto_type(Node *n, String *qualifier, String *conceptid) {
  * on the invented template parm. This lets the existing %template machinery work for abbreviated function templates.
  * Detection uses SwigType_isauto, which looks through any decoration prefix and recognises both the bare 'auto' base form and
  * the C++20 'auto.c(<id>)' constrained form.  The concept-id (if any) is read via SwigType_concept_name.
+ * 'rettype_parm', when not 0, names the parameter a trailing return type was deduced from, whose placeholder stands for
+ * the same invented template parameter and so is replaced with the same name.
  * Returns 1 if a transformation happened, 0 otherwise. */
-static int promote_abbreviated_template(Node *n) {
+static int promote_abbreviated_template(Node *n, String *rettype_parm) {
   ParmList *parms = Getattr(n, "parms");
   Parm *p;
   int auto_count = 0;
@@ -583,6 +582,12 @@ static int promote_abbreviated_template(Node *n) {
        * preserving outer decoration so 'r.auto' -> 'r.__dummy_auto_N__',
        * 'r.q(const).auto.c(Numeric)' -> 'r.q(const).__dummy_auto_N__', etc. */
       Setattr(p, "type", SwigType_replace_auto_base(ty, invented_name));
+      if (rettype_parm && Equal(Getattr(p, "name"), rettype_parm)) {
+        /* Decoration the return type added, such as the pointer of 'decltype(&value)', sits outside the placeholder and is preserved. */
+        SwigType *rettype = Getattr(n, "type");
+        if (rettype && SwigType_isauto(rettype))
+          Setattr(n, "type", SwigType_replace_auto_base(rettype, invented_name));
+      }
       if (last_invented) {
         set_nextSibling(last_invented, tp);
       } else {
@@ -2166,6 +2171,7 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
 %type <intvalue> variadic_opt;
 %type <type>     type rawtype type_right anon_bitfield_type decltype decltypeexpr cpp_alternate_rettype explicit_instantiation_rettype trailing_rettype;
 %type <str>      decltype_prefix;
+%type <str>      noexcept_specifier_opt;
 %type <str>      structured_binding_names;
 %type <bases>    base_list inherit raw_inherit;
 %type <dtype>    definetype def_args etype default_delete deleted_definition explicit_default;
@@ -2218,18 +2224,43 @@ static const struct Define default_dtype;
    long as the trailing return type is being reduced. */
 static ParmList *trailing_rettype_parms = 0;
 
-/* A copy of the type of the function parameter named 'name' in the parameter list of the function whose trailing
-   return type is being parsed, or 0 when there is no such parameter.  A parameter declared with an 'auto'
-   placeholder is passed over: it is a C++20 abbreviated function template parameter, which is turned into an
-   invented template parameter only once the whole declaration has been reduced, so the placeholder is not yet
-   the name of anything a return type can be spelled with. */
+/* The name of the parameter a trailing return type was deduced from, when that parameter was declared with an 'auto'
+   placeholder, or 0 otherwise.  The placeholder cannot be resolved until the whole declaration has reduced and the
+   parameter has become an invented template parameter, so it is left in the return type for
+   promote_abbreviated_template() to complete then. */
+static String *trailing_rettype_placeholder_parm = 0;
+
+/* Apply the parameter adjustments of C++ [dcl.fct]/5 to the copy 't': an array parameter has the type pointer to
+   element and a function parameter the type pointer to function.  normalize_parms() in typepass.cxx applies the
+   function half to the parameter itself, but that is a later pass and a decltype here is resolved while parsing. */
+static void adjust_parm_type(SwigType *t) {
+  if (SwigType_isreference(t) || SwigType_isrvalue_reference(t))
+    return;
+  if (SwigType_isarray(t)) {
+    SwigType_del_array(t);
+    SwigType_add_pointer(t);
+  } else if (SwigType_isfunction(t)) {
+    SwigType_add_pointer(t);
+  }
+}
+
+/* A copy of the adjusted type of the function parameter named 'name' of the function whose trailing return type is
+   being parsed, or 0 when there is no such parameter.  Never 0 for a parameter that does exist: the caller reads 0
+   as "not in scope" and carries on into the enclosing scope, where an unrelated declaration would shadow it. */
 static SwigType *trailing_rettype_parm_type(String *name) {
   Parm *p;
   for (p = trailing_rettype_parms; p; p = nextSibling(p)) {
     String *pname = Getattr(p, "name");
     SwigType *ptype = Getattr(p, "type");
-    if (pname && ptype && Equal(pname, name))
-      return SwigType_isauto(ptype) ? 0 : Copy(ptype);
+    if (pname && ptype && Equal(pname, name)) {
+      SwigType *t = Copy(ptype);
+      if (SwigType_isauto(t)) {
+        Delete(trailing_rettype_placeholder_parm);
+        trailing_rettype_placeholder_parm = Copy(pname);
+      }
+      adjust_parm_type(t);
+      return t;
+    }
   }
   return 0;
 }
@@ -2290,6 +2321,10 @@ static SwigType *deduce_type_from_value(String *val, int type_code) {
     deduced = symbol_full_type(operand);
     Delete(operand);
     if (deduced) {
+      /* Taking the address of a reference gives a pointer to the referred-to type, there being no such thing as
+       * a pointer to a reference. */
+      if (SwigType_isreference(deduced) || SwigType_isrvalue_reference(deduced))
+        Delete(SwigType_pop(deduced));
       SwigType_add_pointer(deduced);
       return deduced;
     }
@@ -2354,6 +2389,11 @@ static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *d
   SwigType *remaining = Copy(decl);
   int matched = 1;
 
+  /* An id-expression naming a reference has the type it refers to, so 'auto x = r;' with 'r' an 'int&' deduces
+   * 'int'.  Only 'decltype(auto)' keeps the reference, and that does not come through here. */
+  if (SwigType_isreference(placeholder) || SwigType_isrvalue_reference(placeholder))
+    Delete(SwigType_pop(placeholder));
+
   if (SwigType_isreference(remaining) || SwigType_isrvalue_reference(remaining)) {
     Delete(SwigType_pop(remaining));
   } else {
@@ -2384,22 +2424,36 @@ static SwigType *deduce_auto_placeholder(SwigType *initialiser_type, SwigType *d
   return placeholder;
 }
 
-/* Whether the initialiser 'dtype' is a string literal, which is what the text of its value starting with a quote
-   says.  The T_STRING code on its own does not say it: a named cast to 'const char *' summarises to T_STRING too,
-   as does the address of a character. */
+/* Whether the initialiser 'dtype' is a string literal, optionally parenthesised.  The T_STRING code alone does not
+   say so: a named cast to 'const char *' summarises to T_STRING too, as does the address of a character and an
+   expression such as '"text" + 1' that merely has a literal as an operand, hence the check on the whole text. */
 static int initialiser_is_string_literal(const struct Define *dtype) {
+  String *unwrapped;
   const char *text;
+  int is_literal = 0;
+
   if (dtype->type != T_STRING && dtype->type != T_WSTRING)
     return 0;
   if (!dtype->val)
     return 0;
-  text = Char(dtype->val);
-  /* The value text of a string literal is written by the grammar as '"..."', or as 'L"..."' when the literal
-     is wide, whichever of the encoding and raw string prefixes the source spelt it with, so 'L' is the only
-     prefix that can appear here. */
+  unwrapped = Swig_cparse_trim_parenthesis(dtype->val);
+  text = Char(unwrapped ? unwrapped : dtype->val);
+  /* The grammar writes the value text as '"..."', or 'L"..."' when wide, whichever of the encoding and raw string
+     prefixes the source spelt it with, so 'L' is the only prefix that can appear here.  Adjacent literals are
+     already concatenated, so one pair of quotes spans however many pairs the source wrote. */
   if (*text == 'L')
     text++;
-  return *text == '"';
+  if (*text == '"') {
+    text++;
+    while (*text && *text != '"') {
+      if (*text == '\\' && text[1])
+        text++;
+      text++;
+    }
+    is_literal = *text == '"' && text[1] == '\0';
+  }
+  Delete(unwrapped);
+  return is_literal;
 }
 
 /* The type of an 'auto' variable declared with declarator 'decl' and initialised by 'dtype', which is the type
@@ -2504,6 +2558,9 @@ static void set_auto_variable_types(Node *first, const struct Define *first_dtyp
       Setattr(n, "valuetype", holder);
       Delete(holder);
     }
+    /* The type-constraint constrains the variable whether or not the placeholder was deduced, so it is kept on
+     * every declarator of the declaration, not just on the ones left with an undeduced placeholder type. */
+    set_concept_constraint(n, conceptid);
     Delattr(n, "autotype");
   }
   Delete(declaration_type);
@@ -4015,12 +4072,13 @@ c_declaration   : c_decl {
 		}
                 /* Alias declaration for a function type written with the C++11 alternate function syntax, such as
                    'using FP = auto (*)(int) -> int;'.  */
-                | USING idcolon EQUAL auto_type_holder abstract_declarator ARROW cpp_alternate_rettype SEMI {
+                | USING idcolon EQUAL auto_type_holder abstract_declarator noexcept_specifier_opt ARROW cpp_alternate_rettype SEMI {
                   $$ = new_node("cdecl");
                   Setattr($$, "type", $cpp_alternate_rettype);
                   Setattr($$, "storage", "typedef");
                   Setattr($$, "name", $idcolon);
                   Setattr($$, "decl", $abstract_declarator.type);
+                  Setattr($$, "noexcept", $noexcept_specifier_opt);
                   SetFlag($$, "typealias");
                   if ($auto_type_holder.qualifier)
                     Swig_error(cparse_file, cparse_line, "Alias %s with a trailing return type cannot have a qualifier on 'auto'.\n", $idcolon);
@@ -4041,12 +4099,13 @@ c_declaration   : c_decl {
 		  add_symbols($$);
 		}
                 /* Alias template for a function type written with the C++11 alternate function syntax. */
-                | TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause_opt USING idcolon EQUAL auto_type_holder abstract_declarator ARROW cpp_alternate_rettype SEMI {
+                | TEMPLATE LESSTHAN template_parms GREATERTHAN requires_clause_opt USING idcolon EQUAL auto_type_holder abstract_declarator noexcept_specifier_opt ARROW cpp_alternate_rettype SEMI {
                   $$ = new_node("template");
                   Setattr($$, "type", $cpp_alternate_rettype);
                   Setattr($$, "storage", "typedef");
                   Setattr($$, "name", $idcolon);
                   Setattr($$, "decl", $abstract_declarator.type);
+                  Setattr($$, "noexcept", $noexcept_specifier_opt);
                   Setattr($$, "templateparms", $template_parms);
                   Setattr($$, "templatetype", "cdecl");
                   SetFlag($$, "aliastemplate");
@@ -4149,7 +4208,7 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      if ($cpp_const.qualifier && $storage_class && Strstr($storage_class, "static"))
 		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
               /* C++20 abbreviated function template: any parm typed 'auto' becomes an invented type template parameter. */
-              if ($$) promote_abbreviated_template($$);
+              if ($$) promote_abbreviated_template($$, 0);
 	      Delete($storage_class);
            }
 	   | storage_class type declarator cpp_const EQUAL error SEMI {
@@ -4211,17 +4270,24 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
               /* The function parameters are in scope in the trailing return type, so make them visible to any
                * decltype in it for as long as it is being reduced. */
               trailing_rettype_parms = $declarator.parms;
+              Delete(trailing_rettype_placeholder_parm);
+              trailing_rettype_placeholder_parm = 0;
              } trailing_rettype {
               trailing_rettype_parms = 0;
-             } virt_specifier_seq_opt requires_clause_opt initializer c_decl_tail {
+             } requires_clause_opt virt_specifier_seq_opt initializer c_decl_tail {
               $$ = new_node("cdecl");
 	      if ($cpp_const.qualifier) SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Setattr($$,"refqualifier",$cpp_const.refqualifier);
               Setattr($$,"type",$trailing_rettype);
               /* A trailing return type that is itself a placeholder, 'auto f() -> auto' or 'auto f() -> decltype(auto)',
-               * still leaves the return type to be deduced from the body. */
-              if (SwigType_isauto($trailing_rettype))
+               * still leaves the return type to be deduced from the body.  A placeholder from an abbreviated parameter
+               * is not one of those - promote_abbreviated_template() fills it in below. */
+              if (SwigType_isauto($trailing_rettype) && !trailing_rettype_placeholder_parm)
                 SetFlag($$, "autodeducefrombody");
+              if (trailing_rettype_placeholder_parm && !SwigType_isauto($trailing_rettype)) {
+                /* The placeholder is buried in a template argument, as in '-> std::vector<decltype(value)>', not the type's base, so cannot be replaced. */
+                Swig_warning(WARN_CPP11_DECLTYPE, cparse_file, cparse_line, "Unable to deduce decltype for '%s'.\n", trailing_rettype_placeholder_parm);
+              }
 	      Setattr($$,"storage",$storage_class);
 	      Setattr($$,"name",$declarator.id);
 	      Setattr($$,"decl",$declarator.type);
@@ -4229,7 +4295,8 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	      Setattr($$,"throws",$cpp_const.throws);
 	      Setattr($$,"throw",$cpp_const.throwf);
 	      Setattr($$,"noexcept",$cpp_const.nexcept);
-	      Setattr($$,"final",$cpp_const.final);
+              /* virt_specifier_seq_opt matches after the requires-clause and cpp_const before the return type, so only one can be present. */
+              Setattr($$, "final", $virt_specifier_seq_opt ? $virt_specifier_seq_opt : $cpp_const.final);
               set_concept_constraint($$, $auto_type_holder.conceptid);
               if ($requires_clause_opt) {
                 Node *placeholder = Getattr($$, "constraint");
@@ -4281,8 +4348,10 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 
 	      if ($cpp_const.qualifier && $storage_class && Strstr($storage_class, "static"))
 		Swig_error(cparse_file, cparse_line, "Static function %s cannot have a qualifier.\n", Swig_name_decl($$));
-              /* Promote any 'auto' / 'Concept auto' parm to an invented type template parameter. */
-              if ($$) promote_abbreviated_template($$);
+              /* Promote any 'auto' / 'Concept auto' parm to an invented type template parameter, completing any return type placeholder. */
+              if ($$) promote_abbreviated_template($$, trailing_rettype_placeholder_parm);
+              Delete(trailing_rettype_placeholder_parm);
+              trailing_rettype_placeholder_parm = 0;
 	      Delete($storage_class);
            }
            /* C++14 allows the trailing return type to be omitted.  It's
@@ -4316,6 +4385,7 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
                 Setattr($$, "valuetype", type);
                 if (Len(dtype.val) > 0)
                   Setattr($$, "value", dtype.val);
+                set_concept_constraint($$, $auto_type_holder.conceptid);
                 Delete(dtype.val);
                 Delete(type);
               } else {
@@ -4440,12 +4510,29 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
                 SwigType_push($declarator.type, $cpp_const.qualifier);
 	      Delete($storage_class);
 	   }
+           /* C++11 copy-list-initialisation of an 'auto' variable, such as 'auto values = {1, 2};'.  Unlike the
+              direct-list-initialisation of 'auto value{1};', which deduces the type of the single element, this
+              deduces a 'std::initializer_list' of the element type.  The 'std::initializer_list' in Lib/swig.swg
+              is a stub whose typemaps only emit warning 476, so there is nothing useful to wrap the variable as
+              and it is ignored with a warning.  The warning names only the braced list, since an empty list, a
+              list of differing types and a 'decltype(auto)' variable all deduce nothing, being ill-formed. */
+           | storage_class auto_type_holder declarator cpp_const EQUAL LBRACE {
+              if (skip_balanced('{', '}') < 0) Exit(EXIT_FAILURE);
+             } braced_initialiser_end {
+              $$ = 0;
+              Swig_warning(WARN_CPP11_AUTO, cparse_file, cparse_line,
+                  "Unable to deduce auto type for variable '%s' from a braced initialiser list (ignored).\n",
+                  $declarator.id);
+              Clear(scanner_ccode);
+              Delete($storage_class);
+           }
 	   /* C++11 auto variable declaration for which we can't parse the initialiser. */
            | storage_class auto_type_holder declarator cpp_const EQUAL error SEMI {
               SwigType *type = auto_type_holder_type($auto_type_holder.qualifier, $auto_type_holder.conceptid);
 	      $$ = new_node("cdecl");
               if ($cpp_const.qualifier)
                 SwigType_push($declarator.type, $cpp_const.qualifier);
+              set_concept_constraint($$, $auto_type_holder.conceptid);
 	      Setattr($$, "type", type);
 	      Setattr($$, "storage", $storage_class);
               Setattr($$, "name", $declarator.id);
@@ -4457,18 +4544,20 @@ c_decl  : storage_class type declarator cpp_const initializer c_decl_tail {
 	   }
            /* C++17 structured binding, such as 'auto [a, b] = pt;'.  The names are bound to the members of the
               initialiser, which SWIG would have to know the layout of to give each name a type, so the whole
-              declaration is parsed and ignored with a warning. */
-           | storage_class auto_type_holder structured_binding_ref LBRACKET structured_binding_names RBRACKET EQUAL definetype SEMI {
+              declaration is ignored with a warning.
+
+              The initialiser is skipped rather than parsed: nothing is wrapped whatever it says, and skipping
+              takes all three of the copy ('= pt'), direct-list ('{pt}') and parenthesised ('(pt)') forms as they
+              come, including an initialiser SWIG has no grammar for.  The skip balances brackets, so a semicolon
+              inside the initialiser - the body of a lambda, say - does not end the declaration early.
+
+              The rule ends at the ']' so that the skip starts at the first token of the initialiser.  This
+              relies on the state after the ']' reducing by default, which it does because no other rule shares
+              the prefix - adding one would make the parser read a lookahead token first and the skip would then
+              start one token late. */
+           | storage_class auto_type_holder structured_binding_ref LBRACKET structured_binding_names RBRACKET {
               $$ = 0;
-              Swig_warning(WARN_CPP17_STRUCTURED_BINDING, cparse_file, cparse_line, "Structured binding '%s' is not supported (ignored).\n",
-                  $structured_binding_names);
-              Delete($storage_class);
-              Delete($structured_binding_names);
-           }
-           /* A structured binding whose initialiser SWIG cannot parse, such as the 'Pt{1, 2}' of
-              'auto&& [a, b] = Pt{1, 2};'. */
-           | storage_class auto_type_holder structured_binding_ref LBRACKET structured_binding_names RBRACKET EQUAL error SEMI {
-              $$ = 0;
+              if (skip_balanced_to_semicolon() < 0) Exit(EXIT_FAILURE);
               Swig_warning(WARN_CPP17_STRUCTURED_BINDING, cparse_file, cparse_line, "Structured binding '%s' is not supported (ignored).\n",
                   $structured_binding_names);
               Delete($storage_class);
@@ -4564,6 +4653,13 @@ auto_decl_tail : SEMI {
                    Clear(scanner_ccode);
                }
                | c_decl_list_tail
+               ;
+
+/* The end of a copy-list-initialised 'auto' declaration: the semicolon, or the declarators that follow it.  None is wrapped, so the rest is skipped. */
+braced_initialiser_end : SEMI
+               | COMMA {
+                   if (skip_balanced_to_semicolon() < 0) Exit(EXIT_FAILURE);
+               }
                ;
 
 initializer   : def_args
@@ -8060,6 +8156,13 @@ constraint_primary : idcolon {
                  }[atom] {
                     $$ = $atom;
                  }
+               | NUM_BOOL {
+                    /* A literal is a primary-expression, so 'requires true' and 'requires false' are constraints.
+                     * Only the boolean literals are useful ones - [temp.constr.atomic] requires an atomic
+                     * constraint to be of type bool, which rejects every other literal. */
+                    $$ = Constraint_new_atom("expression");
+                    Setattr($$, "value", $NUM_BOOL.val);
+                 }
                | requires_expression {
                     $$ = Constraint_new_atom("requires-expression");
                     appendChild($$, $requires_expression);
@@ -8814,6 +8917,17 @@ class_virt_specifier_opt : FINAL {
                }
                ;
 
+noexcept_specifier_opt : %empty {
+                 $$ = 0;
+               }
+               | NOEXCEPT {
+                 $$ = NewString("true");
+               }
+               | NOEXCEPT LPAREN expr RPAREN {
+                 $$ = $expr.val;
+               }
+               ;
+
 exception_specification : THROW LPAREN parms RPAREN {
 		    $$ = default_dtype;
                     $$.throws = $parms;
@@ -8859,14 +8973,20 @@ qualifiers_exception_specification : cv_ref_qualifier {
                }
                ;
 
+/* A virt-specifier-seq comes after the trailing requires-clause, not before it, so 'int m() requires C<T> final;'
+ * is the valid spelling and 'int m() final requires C<T>;' is not.  A virt-specifier-seq without a requires-clause
+ * arrives through qualifiers_exception_specification, which is where the older grammar has always taken it. */
 cpp_const      : qualifiers_exception_specification
-               | qualifiers_exception_specification REQUIRES constraint {
+               | qualifiers_exception_specification REQUIRES constraint virt_specifier_seq_opt {
                  $$ = $qualifiers_exception_specification;
                  $$.constraint_node = $constraint;
+                 if ($virt_specifier_seq_opt)
+                   $$.final = $virt_specifier_seq_opt;
                }
-               | REQUIRES constraint {
+               | REQUIRES constraint virt_specifier_seq_opt {
                  $$ = default_dtype;
                  $$.constraint_node = $constraint;
+                 $$.final = $virt_specifier_seq_opt;
                }
                | %empty {
                  $$ = default_dtype;

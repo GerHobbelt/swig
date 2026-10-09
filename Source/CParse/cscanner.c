@@ -240,11 +240,28 @@ static const struct literal_token *parser_literal_token(int tok) {
 }
 
 /* -----------------------------------------------------------------------------
+ * promote_type()
+ *
+ * The C++ integral promotion of the T_* type code 't', which is the type an operand of an arithmetic
+ * operator has after promotion.  Used by the expression grammar for its operators and by
+ * literal_type_code() for a literal written with a unary '+' or '-'.
+ * ----------------------------------------------------------------------------- */
+
+int promote_type(int t) {
+  if ((t >= T_BOOL && t <= T_USHORT) || t == T_CHAR || t == T_WCHAR)
+    return T_INT;
+  return t;
+}
+
+/* -----------------------------------------------------------------------------
  * literal_type_code()
  *
  * Returns the T_* type code of 'text' when the text is a single literal, optionally preceded by a unary '+' or '-',
  * such as the '42' of the braced initialiser in 'auto v{42}'.  Returns T_UNKNOWN for anything else, including an
  * identifier, an empty text and an expression made up of more than one token.
+ *
+ * A unary '+' or '-' promotes its operand, so '+'a'' is an int rather than a char, in the same way as the
+ * expression grammar's unary operators promote theirs.
  *
  * A private scanner is used so that reading the text cannot disturb the scanner the parser reads its input from.
  * ----------------------------------------------------------------------------- */
@@ -254,21 +271,57 @@ int literal_type_code(String *text) {
   String *copy = Copy(text);
   const struct literal_token *entry;
   int code = T_UNKNOWN;
+  int unary = 0;
   int tok;
 
   Seek(copy, 0, SEEK_SET);
   Scanner_push(literal, copy);
   tok = Scanner_token(literal);
-  if (tok == SWIG_TOKEN_PLUS || tok == SWIG_TOKEN_MINUS)
+  if (tok == SWIG_TOKEN_PLUS || tok == SWIG_TOKEN_MINUS) {
+    unary = 1;
     tok = Scanner_token(literal);
+  }
   entry = scanner_literal_token(tok);
   /* A token following the literal means the text is an expression rather than a text a type can be read off. */
   if (entry && Scanner_token(literal) <= 0)
-    code = entry->type_code;
+    code = unary ? promote_type(entry->type_code) : entry->type_code;
 
   DelScanner(literal);
   Delete(copy);
   return code;
+}
+
+/* ----------------------------------------------------------------------------
+ * int skip_balanced_to_semicolon(void)
+ *
+ * Skip the input up to and including the ';' that ends the current declaration.
+ * A ';' nested inside '(...)', '[...]' or '{...}' does not end it, so an
+ * initialiser containing one - the body of a lambda, say - is stepped over
+ * rather than taken for the end of the declaration.
+ *
+ * Returns 0 on success and -1 when the end of input is reached first, which is
+ * reported as a missing semicolon.
+ * ------------------------------------------------------------------------- */
+
+int skip_balanced_to_semicolon(void) {
+  int num_levels = 0;
+  int start_line = Scanner_line(scan);
+
+  while (1) {
+    int tok = Scanner_token(scan);
+    int delta = Scanner_bracket_depth_delta(tok);
+    if (tok <= 0) {
+      if (!Swig_error_count())
+        Swig_error(cparse_file, start_line, "Missing semicolon (';'). Reached end of input.\n");
+      return -1;
+    } else if (delta) {
+      num_levels += delta;
+    } else if (tok == SWIG_TOKEN_SEMI && num_levels <= 0) {
+      cparse_file = Scanner_file(scan);
+      cparse_line = Scanner_line(scan);
+      return 0;
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------------
@@ -1131,6 +1184,10 @@ int yylex(void) {
             int needspace = 1;
             int termtoken = 0;
             const char *termvalue = 0;
+            /* Set while the last token read is the keyword 'decltype' itself, so that a parenthesis opening its
+             * operand is told apart from the one opening the parameter list.  A type merely ending in those eight
+             * characters, such as the user defined 'mydecltype', is not the keyword. */
+            int after_decltype = strcmp(Char(Scanner_text(scan)), "decltype") == 0;
 
             Append(s, Scanner_text(scan));
             while (1) {
@@ -1139,7 +1196,7 @@ int yylex(void) {
               if (nexttok <= 0) {
                 Swig_error(Scanner_file(scan), Scanner_line(scan), "Syntax error. Bad operator name.\n");
               }
-              if (nexttok == SWIG_TOKEN_LPAREN && Len(s) >= 8 && strcmp(Char(s) + Len(s) - 8, "decltype") == 0) {
+              if (nexttok == SWIG_TOKEN_LPAREN && after_decltype) {
                 /* A conversion function to a type written with decltype, such as 'operator decltype(auto)()'.
                  * This parenthesis opens the operand of decltype and belongs to the name, unlike the one that
                  * ends the name and opens the parameter list.  Consuming it into the name keeps a declaration
@@ -1159,6 +1216,7 @@ int yylex(void) {
                   Append(s, Scanner_text(scan));
                 }
                 needspace = 0;
+                after_decltype = 0;
                 continue;
               }
               if (nexttok == SWIG_TOKEN_LPAREN) {
@@ -1185,12 +1243,14 @@ int yylex(void) {
                 if (needspace) {
                   Append(s, " ");
                 }
+                after_decltype = strcmp(Char(Scanner_text(scan)), "decltype") == 0;
                 Append(s, Scanner_text(scan));
               } else if (nexttok == SWIG_TOKEN_ENDLINE) {
               } else if (nexttok == SWIG_TOKEN_COMMENT) {
               } else {
                 Append(s, Scanner_text(scan));
                 needspace = 0;
+                after_decltype = 0;
               }
             }
             yylval.str = s;

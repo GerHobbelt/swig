@@ -23,6 +23,7 @@
 <li><a href="#CPlusPlus20_constrained_alias_templates">Constrained alias templates</a>
 <li><a href="#CPlusPlus20_variable_templates">Variable templates initialised from a requires-expression</a>
 <li><a href="#CPlusPlus20_class_template_argument_deduction">Class template argument deduction</a>
+<li><a href="#CPlusPlus20_structured_bindings">Structured bindings</a>
 </ul>
 <li><a href="#CPlusPlus20_preprocessor_changes">Preprocessor changes</a>
 <ul>
@@ -355,6 +356,33 @@ decorated spellings <tt>const auto&amp;...</tt>, <tt>auto&amp;&amp;...</tt> and
 </p>
 
 <p>
+An <tt>auto</tt> pack may be followed by further parameters, of any kind, and
+there may be more than one pack.  One type is still given per wrapped
+parameter: the types the parameters after a pack need are taken from the end of
+the <tt>%template</tt> argument list, and the pack takes what is left.
+</p>
+
+<div class="code">
+<pre>
+%inline %{
+int pack_then_one(auto... values, auto last);
+int pack_then_plain(auto... values, int last);
+int two_packs(auto... first, auto... second);
+%}
+
+%template(pack_then_one_iii)  pack_then_one&lt;int, int, int&gt;;  // three parameters
+%template(pack_then_plain_ii) pack_then_plain&lt;int, int&gt;;     // three parameters
+%template(two_packs_ii)       two_packs&lt;int, int&gt;;           // two parameters
+</pre>
+</div>
+
+<p>
+Only one <tt>auto</tt> pack can be expanded per instantiation, so a second pack
+can only be given a single type.  <tt>two_packs&lt;int, int, int&gt;</tt> is not
+supported and generates a wrapper that does not compile.
+</p>
+
+<p>
 The <tt>auto</tt> placeholder may carry the usual parameter decorations -
 reference, pointer, forwarding reference, and CV-qualifiers.
 </p>
@@ -375,7 +403,7 @@ T o(T x, const auto&amp; y);          // decorated auto mixed with explicit head
 </div>
 
 <p>
-<b>Compatibility note:</b> SWIG-4.5.0 is the first version to parse and support abbreviated function templates with <tt>auto</tt> parameters, including the constrained auto form in both parameter and return type positions, mixing with an explicit template parameter list, and CV-qualifier / reference / pointer decorations on the <tt>auto</tt> placeholder.  SWIG-4.6.0 is the first version to instantiate an <tt>auto</tt> parameter pack, which previously invented a template parameter that was not a pack and so could not be instantiated at all.
+<b>Compatibility note:</b> SWIG-4.5.0 is the first version to parse and support abbreviated function templates with <tt>auto</tt> parameters, including the constrained auto form in both parameter and return type positions, mixing with an explicit template parameter list, and CV-qualifier / reference / pointer decorations on the <tt>auto</tt> placeholder.  SWIG-4.6.0 is the first version to instantiate an <tt>auto</tt> parameter pack, which previously invented a template parameter that was not a pack and so could not be instantiated at all, and the first to give an <tt>auto</tt> parameter pack followed by a plain parameter the template arguments the generated call needs.
 </p>
 
 <H3><a name="CPlusPlus20_concepts">10.2.5 Concepts and requires-clauses</a></H3>
@@ -448,6 +476,20 @@ auto negate_value(T x) -&gt; T requires Numeric&lt;T&gt; {
 }
 
 %template(negate_value_int) negate_value&lt;int&gt;;
+</pre>
+</div>
+
+<p>
+The operands of a constraint-expression are primary-expressions, so a
+literal is a constraint on its own but a unary <tt>!</tt> is not - a
+negated constraint has to be parenthesised, exactly as a C++ compiler
+requires:
+</p>
+
+<div class="code">
+<pre>
+template&lt;typename T&gt; T always(T x) requires true          { return x; }
+template&lt;typename T&gt; T other(T x) requires (!Numeric&lt;T&gt;)  { return x; }
 </pre>
 </div>
 
@@ -674,6 +716,44 @@ template&lt;typename T&gt; requires Numeric&lt;T&gt; T process(T x);
 template&lt;typename T&gt; requires Numeric&lt;T&gt; T process(T x, T y);
 </pre>
 </div>
+<p>
+The same overloads written as abbreviated function templates reach
+<tt>%template</tt> as separate declarations rather than tripping warning
+302, and a <tt>%template</tt> that cannot be resolved without evaluating
+the constraints is rejected as an ambiguous instantiation:
+</p>
+<div class="code">
+<pre>
+int    classify(std::integral auto value);
+double classify(std::floating_point auto value);
+
+// Error: Ambiguous template instantiation of 'classify&lt; double &gt;'. ...
+%template(classify_double) classify&lt;double&gt;;
+</pre>
+</div>
+<p>
+As above, give the overloads distinct signatures - typically a different
+arity - so that only one of them matches a given <tt>%template</tt>.
+</p>
+<p>
+The cv-qualifier and ref-qualifier on a member function are part of its
+signature, so member function templates carrying different ones are
+distinct and are accepted:
+</p>
+<div class="code">
+<pre>
+struct Holder {
+  template&lt;typename T&gt; T get(T x) &amp; requires std::integral&lt;T&gt;;
+  template&lt;typename T&gt; T get(T x) const &amp; requires std::floating_point&lt;T&gt;;
+};
+
+%template(get_int) Holder::get&lt;int&gt;;
+</pre>
+</div>
+<p>
+A target language with no ref-qualifiers keeps one of the two and reports
+warning 516.
+</p>
 <p>
 A class template "partial specialization" whose structural
 template-argument pattern is identical to the primary, intended to be
@@ -962,6 +1042,44 @@ SWIG handles aggregate CTAD exactly as it handles any other CTAD variable: it pe
 template argument deduction, so it issues Warning 347 and skips the variable.  See
 <a href="CPlusPlus17.html#CPlusPlus17_class_template_argument_deduction">Class template argument deduction</a>
 in the C++17 chapter for details.
+</p>
+
+<H3><a name="CPlusPlus20_structured_bindings">10.2.10 Structured bindings</a></H3>
+
+
+<p>
+C++20 extends the C++17 structured binding in three ways.  The initialiser may be
+written in parentheses, the declaration may carry a <tt>static</tt> or
+<tt>thread_local</tt> storage-class-specifier, and the names it introduces may be
+captured by a lambda:
+</p>
+
+<div class="code"><pre>
+%inline %{
+struct Pt {
+  int x;
+  int y;
+};
+
+Pt global_pt = {1, 2};
+
+auto [a, b](global_pt);                         // parenthesised initialiser
+static auto [c, d] = global_pt;                 // storage-class-specifier
+thread_local auto [e, f] = global_pt;
+static const auto&amp; [g, h](global_pt);           // and the two combined
+%}
+</pre></div>
+
+<p>
+SWIG parses all of these and, as in C++17, ignores each one with warning 349,
+<em>Structured binding 'names' is not supported (ignored)</em>.  See
+<a href="CPlusPlus17.html#CPlusPlus17_structured_bindings">Structured bindings</a>
+in the C++17 chapter for why the names are not wrapped and what to do instead.
+</p>
+
+<p>
+Capturing a structured binding in a lambda needs no support in SWIG, as it can only
+happen inside a function body and SWIG skips function bodies without parsing them.
 </p>
 
 <H2><a name="CPlusPlus20_preprocessor_changes">10.3 Preprocessor changes</a></H2>
