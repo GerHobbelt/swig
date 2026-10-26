@@ -127,15 +127,17 @@ null_message = function(f) {
   msg
 }
 null_member = char_array_null_get()
-unittest(grepl("^SWIG:TypeError", null_message(function() CharArrayPingPong(NULL))), TRUE)
-unittest(grepl("^SWIG:TypeError", null_message(function() CharArrayDimsPingPong(NULL))), TRUE)
-unittest(grepl("^SWIG:TypeError", null_message(function() null_member$four <- NULL)), TRUE)
-unittest(grepl("^SWIG:TypeError", null_message(function() global_char_array_null_set(NULL))), TRUE)
+unittest(grepl("^SWIG:NullReferenceError", null_message(function() CharArrayPingPong(NULL))), TRUE)
+unittest(is.null(CharArrayDimsPingPong(NULL)), TRUE)
+unittest(grepl("^SWIG:NullReferenceError", null_message(function() null_member$four <- NULL)), TRUE)
+unittest(grepl("^SWIG:NullReferenceError", null_message(function() global_char_array_null_set(NULL))), TRUE)
+unittest(grepl("^SWIG:TypeError", null_message(function() CharArrayPingPong(character(0)))), TRUE)
 unittest(null_member$four, "qqq")
 unittest(global_char_array_null_get(), "qqq")
 
 unittest(CharPtrArrayJoin(c("a", "bc", "def")), "a|bc|def")
 unittest(CharPtrArrayJoin(c("a", "bc")), "a|bc|NULL")
+unittest(CharPtrArrayJoin(character(0)), "NULL|NULL|NULL")
 unittest(grepl("^SWIG:OverflowError", null_message(function() CharPtrArrayJoin(c("a", "b", "c", "d")))), TRUE)
 unittest(CharPtrArrayReplaceFirst(c("a", "b", "c")), "replaced")
 holder <- CharPtrArrayHolder()
@@ -143,7 +145,13 @@ holder$strs <- c("one", "two")
 unittest(CharPtrArrayHolderJoin(holder), "one|two|NULL")
 global_char_ptr_array_set(c("x", "y", "z"))
 unittest(GlobalCharPtrArrayJoin(), "x|y|z")
-unittest(grepl("^SWIG:TypeError", null_message(function() CharPtrArrayJoin(NULL))), TRUE)
+unittest(grepl("^SWIG:NullReferenceError", null_message(function() CharPtrArrayJoin(NULL))), TRUE)
+
+unittest(is.null(CharPingPong(NULL)), TRUE)
+unittest(grepl("^SWIG:TypeError", null_message(function() CharPingPong(character(0)))), TRUE)
+global_char_set(NULL)
+unittest(is.null(global_char_get()), TRUE)
+unittest(grepl("^SWIG:TypeError", null_message(function() PlainCharPingPong(NULL))), TRUE)
 
 for (i in 0:(count-1)) {
   unittest(global_const_char_get(), CPLUSPLUS_MSG)

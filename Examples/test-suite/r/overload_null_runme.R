@@ -27,12 +27,11 @@ unittest(11, o$byconstref2(NULL))
 unittest(12, o$byconstref2(x))
 
 # const pointer references
-# No SWIGTYPE *const& typemaps for R yet
-#unittest(13, o$byval1cpr(x))
-#unittest(14, o$byval1cpr(NULL))
+unittest(13, o$byval1cpr(x))
+unittest(14, o$byval1cpr(NULL))
 
-#unittest(15, o$byval2cpr(NULL))
-#unittest(16, o$byval2cpr(x))
+unittest(15, o$byval2cpr(NULL))
+unittest(16, o$byval2cpr(x))
 
 # fwd class declaration
 unittest(17, o$byval1fwdptr(x))
@@ -46,10 +45,7 @@ unittest(21, o$byval1fwdref(x))
 unittest(22, o$byval2fwdref(x))
 
 unittest(23, o$bychar1("a"))
-# NULL is not a char and char * does not accept it either
-exception_thrown = FALSE
-tryCatch(o$bychar1(NULL), error = function(e) exception_thrown <<- TRUE)
-unittest(exception_thrown, TRUE)
+unittest(24, o$bychar1(NULL))
 
 q(save="no")
 

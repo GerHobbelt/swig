@@ -7,10 +7,165 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-08: wsfulton
+            [R] A bool returned by reference, such as 'const bool &', or by an OUTPUT or INOUT
+            typemap is now an R logical rather than an integer.
+
+2026-10-08: wsfulton
+            [R] Fix the OUTPUT and INOUT typemaps for a function returning void, which gave the R
+            error "attempt to set index 0/0 in SET_VECTOR_ELT". Also fix the INOUT typemaps for a
+            pointer, such as 'int *INOUT', which crashed. Fix a function returning a class pointer
+            and with OUTPUT or INOUT parameters, which failed to make an object of the returned
+            list. A list is returned holding the return value, if not void, followed by the output
+            values.
+
+2026-10-08: wsfulton
+            [R] A wrapped object of the wrong type passed for a pointer or reference parameter now
+            gives a SWIG TypeError, as in the other target languages. Any pointer was accepted and
+            used as the type of the parameter, so for example passing a 'Foo' for a 'Foo *&'
+            parameter crashed. An object of a class that only another module knows, such as a class
+            derived in a module that %imports this one, is still accepted, as R modules do not share
+            their type information.
+
+2026-10-08: wsfulton
+            [R] NULL and an empty vector, such as integer(0) or character(0), are now told apart,
+            as the R wrappers no longer convert NULL to an empty vector before passing it to C/C++.
+            NULL for a 'const std::vector<T> &' parameter now gives SWIG:NullReferenceError rather
+            than an empty std::vector. NULL for a 'std::vector<T>' passed by value gives a SWIG
+            TypeError. An empty vector is an empty std::vector, an array of zeros for a fixed size
+            array and a pointer to no elements for a pointer to numbers. It gives a SWIG TypeError
+            for a 'char *' string, a char array or a reference. A user scoercein typemap that
+            converts its argument should leave NULL unchanged, as described in the new "NULL and
+            empty vectors" section of the R chapter.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-08: wsfulton
+            [R] Fix reading a fixed size array member or global variable of a numeric or enum type,
+            such as 'int values[4]'. Reading an integer or enum array failed with an R error such
+            as '"_p_int" is not a defined class'. Reading a float or double array gave an R external
+            pointer, which could not be used in R. The array is now read as an R vector of all its
+            elements, of integers, numbers or enum names, which is also what is used to set it. For
+            example, for a struct member 'int values[4]':
+
+              s$values <- c(1L, 2L, 3L, 4L)
+              s$values
+              [1] 1 2 3 4
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-08: wsfulton
+            [R] Fix a fixed size array parameter, member or global variable of a numeric type or an
+            enum, such as 'int [4]', given a vector with fewer elements than the array, which read
+            past the end of the vector. The remaining elements are now 0. A vector with more
+            elements than the array now gives a SWIG OverflowError.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-08: wsfulton
+            [R] Enum names, such as c("One", "Two"), can now be passed for an enum array parameter,
+            such as 'enum Finger [2]', which gave the R internal error "INTEGER() can only be
+            applied to a 'integer', not a 'character'". An integer vector is still accepted.
+
+2026-10-08: wsfulton
+            [R] NULL for a pointer to or an array of a numeric type or an enum, such as 'int *',
+            'double [3]' or 'int []', is now passed as a NULL pointer, as in the other target
+            languages, rather than as a pointer to a zero length array, or for an array of enums,
+            giving an R internal error.
+
+2026-10-08: wsfulton
+            [R] NULL can now be passed to an overloaded function or method taking a reference to
+            a pointer, such as 'Foo *const &', which gave "cannot find overloaded function".
+
 2026-10-07: olly
 	    [Guile] #3194 The default "procdoc" format is now "plain" (which
 	    works with Guile 1.4.1 and later), and the old "guile-1.4" format
 	    is no longer supported.
+
+2026-10-07: wsfulton
+            [R] NULL for a primitive type, such as int, double or bool, passed by value or by
+            const reference, or for a const reference to an enum, now gives a SWIG TypeError. It
+            crashed for int, long and bool passed by value. It gave an R internal error, such as
+            "REAL() can only be applied to a 'numeric', not a 'NULL'", for float and double passed
+            by value and for a const reference to an enum. Otherwise it gave NA, or true for bool.
+
+2026-10-07: wsfulton
+            [R] NULL for a reference to a primitive or library type, such as 'int &',
+            'std::string &' or 'std::vector<int> &', including the INPUT and INOUT typemaps for a
+            reference, now gives SWIG:NullReferenceError, as for a reference to a class, instead
+            of an R internal error, "R_ExternalPtrAddr: argument of type INTSXP is not an external
+            pointer" in R 4.5. A number for the INPUT and INOUT typemaps for a reference, such as
+            'int &INPUT', which gave the same R error, is now accepted.
+
+2026-10-07: wsfulton
+            [Tcl] A negative number, such as -1, is no longer accepted for an unsigned long long
+            parameter or variable, where it gave a very large number. An OverflowError is raised
+            instead. Nor is a negative number with spaces before it, such as " -1", for an unsigned
+            long. An unsigned long value too big for a long is now accepted in any form Tcl accepts
+            for an integer, such as with spaces after it, as for a smaller value.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-07: wsfulton
+            [Perl] A negative number in a string, such as "-1", or a negative floating point number,
+            such as -1.0, is no longer accepted for an unsigned long, unsigned long long or size_t
+            parameter or variable, where it gave a very large number. An OverflowError is raised
+            instead, as it already was for the integer -1.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-07: wsfulton
+            [Perl] An empty string or undef is no longer accepted as 0 for an integer or floating
+            point parameter or variable, such as int or double. A TypeError is raised instead, as it
+            already was for any other string that is not a number. This includes the value returned
+            by a director method implemented in Perl, so a method that returns undef, such as with
+            'return;', for an int now throws Swig::DirectorTypeMismatchException instead of giving 0.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-07: wsfulton
+            [R] Fix the reverse order '(size_t LENGTH, const char *STRING)' typemaps. Also fix the
+            '(const char *STRING, size_t LENGTH)' typemaps when applied to another char type, such
+            as 'unsigned char *'. Both converted the string to an integer, so a string could not be
+            passed.
+
+2026-10-07: wsfulton
+            [Javascript, Octave, Perl, Python, Ruby] Fix NULL, such as None in Python, passed for
+            a string with a length from the '(const char *STRING, size_t LENGTH)' typemaps, the
+            reverse order '(size_t LENGTH, const char *STRING)' typemaps or %cstring_input_binary.
+            The NULL pointer was given a length of -1, converted to the length's type, so a size_t
+            length was its largest value. The length is now 0.
+
+2026-10-07: wsfulton
+            [C#] Fix a constant from a wide string or wide character literal holding a character
+            that is not ASCII, with %csconst(1), which was given a C# char for each byte of its
+            UTF-8 encoding, so that a wide character constant did not compile.
+
+2026-10-07: wsfulton
+            Fix the value of a wide string literal holding a character that is not ASCII, such as
+            L"\x263A", L"\u00E9" or the character written as itself, used for a constant or
+            default argument. A hexadecimal escape sequence from 0x100 to 0x10FFFF was truncated to a
+            single byte. An octal one above \377 gave an "octal escape sequence out of range" error. Any
+            other such character became a wide character for each byte of its UTF-8 encoding. Also
+            fix the array size deduced for an auto or decltype(auto) variable initialised by such a
+            literal, such as 'auto &s = L"\u00E9";', which counted the UTF-8 bytes.
+
+2026-10-07: wsfulton
+            [Guile] A char, signed char or unsigned char parameter or variable, including the
+            elements of a list or vector from list-vector.i, now raises wrong-type-arg for
+            anything other than a character, such as #nil, a number or a string, which was
+            converted to an arbitrary char. It raises out-of-range for a character above 255, which
+            was truncated.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-07: wsfulton
+            [R] NULL is now accepted for a 'char *' parameter, member or global variable and gives
+            a NULL pointer. NULL for a char parameter gives a SWIG TypeError. Both gave the R
+            internal error "CHAR() can only be applied to a 'CHARSXP', not a 'NULL'" before. An
+            overload taking 'char *' is now selected for NULL. Errors for NULL, such as an invalid
+            null reference, are now reported as SWIG:NullReferenceError instead of
+            SWIG:UnknownError.
 
 2026-10-07: wsfulton
             [R] Fix a parameter that is a fixed size array of strings, such as 'char *strs[3]',
@@ -63,9 +218,11 @@ Version 4.6.0 (in progress)
             is now raised instead.
 
 2026-10-06: wsfulton
-            [R] NULL for a char array parameter, or set on a char array member or global
-            variable, now gives a SWIG TypeError instead of the R internal error "CHAR() can only
-            be applied to a 'CHARSXP', not a 'NULL'".
+            [R] NULL for a fixed size char array parameter, such as 'char [8]', or a
+            'const char []' one, is now passed on as a NULL pointer, as for any other array
+            parameter, instead of giving an R error. NULL for a 'char []' parameter, or set on a
+            char array member or global variable, now gives a SWIG NullReferenceError instead of the
+            R internal error "CHAR() can only be applied to a 'CHARSXP', not a 'NULL'".
 
 2026-10-06: wsfulton
             [C] When wrapping C++, NULL is no longer accepted for a char array parameter of any
