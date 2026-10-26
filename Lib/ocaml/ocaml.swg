@@ -129,7 +129,7 @@
     args = caml_list_append(args, swig_result);
 }
 
-%typemap(directorin) SWIGTYPE *, SWIGTYPE [], SWIGTYPE &, SWIGTYPE && {
+%typemap(directorin) SWIGTYPE *, SWIGTYPE &, SWIGTYPE && {
     swig_result = SWIG_Ocaml_ptr_to_val("create_$ltype_from_ptr", (void *)&$1, $&1_descriptor);
     args = caml_list_append(args, swig_result);
 }
@@ -229,13 +229,13 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 /* Override the above, copying into a zero filled array as the string may be shorter than the array */
 %typemap(in, fragment="SWIG_CopyCharArray") char [ANY] (char temp[$1_dim0]) {
     char *str = caml_string_val($input);
-    if (!str) {
-        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    $1 = 0;
+    if (str) {
+        if (!SWIG_CopyCharArray(temp, $1_dim0, str, (size_t)caml_string_len($input))) {
+            SWIG_OCamlThrowException(SWIG_OCamlIllegalArgumentException, "string too long for char array");
+        }
+        $1 = ($ltype)temp;
     }
-    if (!SWIG_CopyCharArray(temp, $1_dim0, str, (size_t)caml_string_len($input))) {
-        SWIG_OCamlThrowException(SWIG_OCamlIllegalArgumentException, "string too long for char array");
-    }
-    $1 = ($ltype)temp;
 }
 
 %typemap(varin, fragment="SWIG_CopyCharArray") char [ANY] {
@@ -250,9 +250,6 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 
 %typemap(in) char [] %{
     $1 = ($ltype)caml_string_val($input);
-    if (!$1) {
-        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
-    }
 %}
 
 /* Read only, as there is no size to bound the copy */
@@ -313,20 +310,36 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 %swigtype_ptr_in(directorout);
 %swigtype_ptr_out(out);
 %swigtype_ptr_out(varout);
-%swigtype_ptr_out(directorin);
 
-%define %swigtype_array_fail(how,msg)
-%typemap(how) SWIGTYPE [] {
-    caml_failwith(msg);
+%typemap(directorin) SWIGTYPE (CLASS::*) {
+    void *v;
+    memcpy(&v,& $1, sizeof(void *));
+    args = caml_list_append(args, caml_val_ptr(v,$1_descriptor));
 }
-%enddef
 
-%swigtype_array_fail(in,"Array arguments for arbitrary types need a typemap");
-%swigtype_array_fail(varin,"Assignment to global arrays for arbitrary types need a typemap");
-%swigtype_array_fail(out,"Array arguments for arbitrary types need a typemap");
-%swigtype_array_fail(varout,"Array variables need a typemap");
-%swigtype_array_fail(directorin,"Array results with arbitrary types need a typemap");
-%swigtype_array_fail(directorout,"Array arguments with arbitrary types need a typemap");
+/* Arrays, as a pointer to the first element */
+%typemap(in) SWIGTYPE [] = SWIGTYPE *;
+%typemap(out) SWIGTYPE [] = SWIGTYPE *;
+%typemap(varout) SWIGTYPE [] = SWIGTYPE *;
+
+%typemap(directorin) SWIGTYPE [] %{
+    args = caml_list_append(args, caml_val_ptr((void *)$1, $1_descriptor));
+%}
+
+%typemap(varin) SWIGTYPE [ANY] %{
+    void *inp = caml_ptr_val($input,$1_descriptor);
+    if (!inp) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    } else {
+        size_t ii;
+        for (ii = 0; ii < (size_t)$1_size; ii++)
+            (($1_basetype *)$1)[ii] = (($1_basetype *)inp)[ii];
+    }
+%}
+
+%typemap(varin, warning=SWIGWARN_TYPEMAP_VARIN_UNDEF_MSG) SWIGTYPE [] %{
+    caml_failwith("read-only $name");
+%}
 
 /* C++ References */
 
@@ -348,7 +361,29 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 %swig_enum_in(directorout)
 %swig_enum_out(out)
 %swig_enum_out(varout)
-%swig_enum_out(directorin)
+
+%typemap(directorin) enum SWIGTYPE %{
+    args = caml_list_append(args, caml_callback2(*caml_named_value(SWIG_MODULE "_int_to_enum"),*caml_named_value("$type_marker"),Val_int((int)$1)));
+%}
+
+%typemap(in) const enum SWIGTYPE & ($*1_ltype temp) %{
+    temp = ($*1_ltype)caml_long_val_full($input,"$*1_ltype_marker");
+    $1 = &temp;
+%}
+%typemap(out) const enum SWIGTYPE & %{
+    $result = caml_callback2(*caml_named_value(SWIG_MODULE "_int_to_enum"),*caml_named_value("$*1_ltype_marker"),Val_int((int)*$1));
+%}
+%typemap(varout) const enum SWIGTYPE & %{
+    $result = caml_callback2(*caml_named_value(SWIG_MODULE "_int_to_enum"),*caml_named_value("$*1_ltype_marker"),Val_int((int)$1));
+%}
+%typemap(directorin) const enum SWIGTYPE & %{
+    args = caml_list_append(args, caml_callback2(*caml_named_value(SWIG_MODULE "_int_to_enum"),*caml_named_value("$*1_ltype_marker"),Val_int((int)$1)));
+%}
+%typemap(directorout, warning=SWIGWARN_TYPEMAP_THREAD_UNSAFE_MSG) const enum SWIGTYPE & %{
+    static $*1_ltype temp;
+    temp = ($*1_ltype)caml_long_val_full($input,"$*1_ltype_marker");
+    $result = &temp;
+%}
 
 /* String & length typemap */
 
@@ -385,9 +420,22 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 %apply SWIGTYPE & { SWIGTYPE ((&)[ANY]) }
 %typemap(memberin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
 %typemap(globalin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(varin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [];
+%typemap(varin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
 %apply char[ANY] { char (&)[ANY] }
+/* Unlike for a char array, NULL is not accepted, as a reference cannot be bound to NULL */
+%typemap(in, fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0]) {
+    char *str = caml_string_val($input);
+    if (!str) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    }
+    if (!SWIG_CopyCharArray(temp, $1_dim0, str, (size_t)caml_string_len($input))) {
+        SWIG_OCamlThrowException(SWIG_OCamlIllegalArgumentException, "string too long for char array");
+    }
+    $1 = ($1_ltype)temp;
+}
 %apply SWIGTYPE && { SWIGTYPE ((&&)[ANY]) }
+%typemap(memberin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
+%typemap(globalin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
 
 /* const pointers */
 %apply SWIGTYPE * { SWIGTYPE *const }

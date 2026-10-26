@@ -7,6 +7,256 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-11: wsfulton
+            [R] SWIG_exception now raises an R error for SWIG_IndexError, as for the other error codes,
+            instead of returning NA. This is part of a refactor for consistent error handling, including
+            in the typemaps common to all target languages. To return NA as before, redefine
+            SWIG_exception in the interface file. Also redefine SWIG_exception_fail, which the SWIG
+            library typemaps use, to keep its behaviour:
+
+              %{
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) do { if ((code) == SWIG_IndexError) \
+                return Rf_ScalarLogical(NA_LOGICAL); SWIG_Error(code, msg); SWIG_fail; } while (0)
+              #undef SWIG_exception_fail
+              #define SWIG_exception_fail(code, msg) do { SWIG_Error(code, msg); SWIG_fail; } while (0)
+              %}
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-11: wsfulton
+            [Ruby] SWIG_exception now jumps to the wrapper's fail label after raising the error, as
+            SWIG_exception_fail does, so it can only be used in a wrapper function, as in the other target
+            languages. As rb_raise does not return, it could be used elsewhere before, such as in the body
+            of an %extend method or in a %{ %} function. This is part of a refactor for consistent error
+            handling, including in the typemaps common to all target languages. To use it elsewhere as
+            before, redefine SWIG_exception in the interface file. Also redefine SWIG_exception_fail, which
+            the SWIG library typemaps use, to keep its behaviour:
+
+              %{
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) do { SWIG_Error(code, msg); } while (0)
+              #undef SWIG_exception_fail
+              #define SWIG_exception_fail(code, msg) do { SWIG_Error(code, msg); SWIG_fail; } while (0)
+              %}
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-11: wsfulton
+            [Tcl] SWIG_exception now leaves the wrapper through its cleanup code, as SWIG_fail does, so any
+            memory allocated for the arguments is freed. It returned TCL_ERROR directly before. This
+            corrects the error handling as part of a refactor for consistent error handling, including in
+            the typemaps common to all target languages. To return directly as before, redefine
+            SWIG_exception in the interface file. Also redefine SWIG_exception_fail, which the SWIG library
+            typemaps use, to keep its behaviour:
+
+              %{
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) do { SWIG_Error(code, msg); return TCL_ERROR; } while (0)
+              #undef SWIG_exception_fail
+              #define SWIG_exception_fail(code, msg) do { SWIG_Error(code, msg); SWIG_fail; } while (0)
+              %}
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-11: wsfulton
+            [Scilab] SWIG_exception now leaves the wrapper after setting the error. It carried on with the
+            rest of the wrapper before. This corrects the error handling as part of a refactor for
+            consistent error handling, including in the typemaps common to all target languages. To carry
+            on after the error as before, redefine SWIG_exception in the interface file. Also redefine
+            SWIG_exception_fail, which the SWIG library typemaps use, to keep its behaviour:
+
+              %{
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) SWIG_Scilab_Error(code, msg)
+              #undef SWIG_exception_fail
+              #define SWIG_exception_fail(code, msg) do { SWIG_Error(code, msg); SWIG_fail; } while (0)
+              %}
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-11: wsfulton
+            [C] SWIG_exception now returns from the wrapper after raising the error. It carried on with the
+            rest of the wrapper before, after raising the SWIG_CException when wrapping C++ code, or after
+            calling any SWIG_exception defined in C by the user when wrapping C code or using -noexcept. This
+            corrects the error handling as part of a refactor for consistent error handling, including in the
+            typemaps common to all target languages. To carry on as before, redefine SWIG_exception in the
+            interface file before using it:
+
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) SWIG_CException_Raise(code, msg)
+
+            When wrapping C code or using -noexcept, only the #undef is needed.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-11: wsfulton
+            [C#] SWIG_exception now throws an ArgumentNullException for SWIG_NullReferenceError, as the null
+            checks in the C# typemaps do, instead of a NullReferenceException. This is part of a refactor for
+            consistent error handling, including in the typemaps common to all target languages. To throw a
+            NullReferenceException as before, redefine SWIG_exception in the interface file before using it:
+
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) { if ((code) == SWIG_NullReferenceError) \
+                SWIG_CSharpSetPendingException(SWIG_CSharpNullReferenceException, msg); \
+                else SWIG_CSharpException(code, msg); return $null; }
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-11: wsfulton
+            [Guile] SWIG_exception now raises an error with a symbol as its key, such as swig-type-error,
+            so it can be caught by name. It used a string as the key before, which Guile does not accept,
+            so a wrong-type-arg error was raised instead. SWIG_NullReferenceError now gives misc-error, as
+            for the null checks in the Guile typemaps. This is part of a refactor for consistent error
+            handling, including in the typemaps common to all target languages. To raise the same errors
+            as before, redefine SWIG_exception in the interface file:
+
+              %{
+              SWIGINTERN void SWIG_exception_string_key(int code, const char *msg, const char *subr) {
+                static const char *keys[] = { "swig-error", "swig-io-error", "swig-runtime-error",
+                  "swig-index-error", "swig-type-error", "swig-division-by-zero", "swig-overflow-error",
+                  "swig-syntax-error", "swig-value-error", "swig-system-error", "swig-error",
+                  "swig-memory-error", "swig-null-reference-error" };
+                const char *key = code <= -1 && code >= -13 ? keys[-code - 1] : "swig-error";
+                scm_error(scm_from_locale_string(key), subr, msg, SCM_EOL, SCM_BOOL_F);
+              }
+              #undef SWIG_exception
+              #define SWIG_exception(code, msg) SWIG_exception_string_key(code, msg, FUNC_NAME)
+              %}
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-10: wsfulton
+            [OCaml] An array, such as 'int [4]', 'Foo [2]' or 'int [2][3]', is now wrapped as a
+            pointer to its first element by default, as in the other target languages. An array
+            parameter, member variable or global variable failed with an error such as "Array
+            arguments for arbitrary types need a typemap", unless array typemaps, such as those in
+            carray.i, were used. C_void is passed as a NULL pointer for an array parameter. Setting
+            an array member or global variable copies the elements, raising Invalid_argument for
+            NULL. A global variable that is an array of unknown size, such as 'int []', is read only
+            and gives warning 462.
+
+2026-10-10: wsfulton
+            [PHP] NULL is now passed as a NULL pointer for a 'char INPUT[ANY]' parameter with the
+            typemaps.i typemaps, as for a 'char *' parameter, rather than as an empty string.
+
+2026-10-10: wsfulton
+            [C#] The arrays_csharp.i FIXED[] typemaps for 'long' and 'unsigned long' now use a C#
+            int[] or uint[], as the INPUT[], OUTPUT[] and INOUT[] typemaps do, unless SWIGWORDSIZE64
+            is defined. They always used long[] or ulong[], which passed the wrong data where long
+            is 32 bits, such as on Windows.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-10: wsfulton
+            [C#] Fix the arrays_csharp.i 'long' and 'unsigned long' INPUT[], OUTPUT[] and INOUT[]
+            typemaps when typemaps.i is included after arrays_csharp.i. typemaps.i replaced them with
+            typemaps that crashed for null and passed only the first element, so these arrays now
+            behave as for the other primitive types.
+
+2026-10-10: wsfulton
+            [R] NULL now selects an overloaded function or method taking a pointer to or an array
+            of numbers, bools or enums, such as 'int *', 'double []' or 'bool [3]', or an array of
+            strings, such as 'char *[3]', where it gave "cannot find overloaded function". A
+            character vector of enum names, such as c("One", "Two"), now also selects an overload
+            taking a fixed size enum array, such as 'enum Finger [2]'.
+
+2026-10-09: wsfulton
+            [OCaml] An enum passed or returned by const reference, such as 'const Color &', is now
+            converted to and from an OCaml enum value, as when passed by value, rather than being
+            handled as a pointer. So is a global variable of such a type. An enum value could not be
+            passed for such a parameter. A director method returning one crashed.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-09: wsfulton
+            [OCaml] Fix director methods with an enum or a member pointer parameter, which gave
+            wrapper code that did not compile.
+
+2026-10-09: wsfulton
+            [OCaml] Fix a crash when C_void is passed for an array with the carray.i typemaps,
+            such as 'int [4]'. A NULL pointer is now passed for a parameter. Setting a member
+            variable now raises Invalid_argument.
+
+2026-10-09: wsfulton
+            [Scilab] An empty matrix for a parameter that is an array of numbers, bools or strings,
+            such as 'int [4]', 'double []', 'bool [4]' or 'char *[]', is now passed as a NULL
+            pointer, as NULL is in the other target languages. It was passed as memory for no
+            elements, which the function read past the end of, or rejected for bools and strings.
+            Setting an array member or global variable, such as 'int [4]', to an empty matrix now
+            gives a SWIG NullReferenceError rather than copying from it. The matrix.i typemaps for
+            'char **' and a std::vector<bool> parameter also now accept an empty matrix.
+
+2026-10-09: wsfulton
+            [C#, D, Go, Guile, Java, Lua, PHP] Fix a crash when setting an array member or global
+            variable, such as 'int [4]', 'Foo [2]' or 'int [2][3]', to NULL, such as null in Java,
+            as the array was copied from it. An error is now raised instead, as in the other target
+            languages. NULL for an array parameter is still passed as a NULL pointer.
+
+2026-10-09: wsfulton
+            [C] When wrapping C++, fix a crash when setting an array member or global variable,
+            such as 'int [4]' or 'int [2][3]', to NULL. SWIG_exception is now called with
+            SWIG_NullReferenceError instead, which raises a SWIG_CException.
+
+2026-10-09: wsfulton
+            [C#, D] The canthrow attribute now works in memberin and globalin typemaps, so that a
+            pending exception set in one of these typemaps is thrown when setting the variable.
+
+2026-10-09: wsfulton
+            Fix a string literal with characters after an embedded NUL, such as "a\0bc" or
+            L"a\0bc", where SWIG copies the literal into the generated code, such as for a
+            constant from '#define S "a\0bc"' or %constant, or for a default argument used by
+            the wrapper with compactdefaultargs. The characters after the NUL were lost, usually
+            becoming NULs, as in "a\0\0\0".
+
+2026-10-09: wsfulton
+            [C#, Java] #3559 Fix a constant from a string literal holding a character that is not
+            ASCII, with %csconst(1) or %javaconst(1), which was given a char for each byte of its
+            UTF-8 encoding. It now holds the characters that the literal encodes.
+
+2026-10-09: wsfulton
+            [C#] Fix a static member constant initialised by a string or wide character literal
+            with %csconst(1), which was given the C++ escape sequences of the literal, so did not
+            compile for a character that is not printable ASCII or for a wide literal, such as:
+
+              struct S {
+                static constexpr const char *ESC = "\033";
+              };
+
+2026-10-09: wsfulton
+            [C#, D, Java] A constant from a wide string or wide character literal, such as
+            '#define WS L"abc"', with %csconst(1), %dmanifestconst or %javaconst(1), is now read
+            from C/C++, as without the feature, when it is wrapped as a pointer, as it is without
+            typemaps for wchar_t. The literal it was initialised with did not compile.
+
+2026-10-09: wsfulton
+            [D, Java] Fix a constant from a wide string or wide character literal with
+            %dmanifestconst or %javaconst(1) and typemaps giving it a string or character type. It
+            was initialised with the C++ wide literal, such as L"abc", so did not compile.
+
+2026-10-09: wsfulton
+            [R] An object can now be passed for an array of its class, such as a Shape for a
+            'Shape [3]' parameter, as a pointer to the first element, as in the other target
+            languages. Any argument other than NULL for an array of a class gave an R internal
+            error such as "R_ExternalPtrAddr: argument of type S4SXP is not an external pointer".
+
+2026-10-09: wsfulton
+            [R] A vector of more than one value, such as c(6, 7), now gives a SWIG TypeError for a
+            number, bool or enum parameter passed by value or by const reference, such as 'short'
+            or 'const double &', which takes one value. The first value was used. An integer type or
+            an enum passed by value gave the warning "using only the first element". The other types
+            gave no warning.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-09: wsfulton
+            [R] A character vector of more than one string, such as c("ab", "cd"), now gives a SWIG
+            TypeError for a 'char *', char array, 'char' or std::string parameter, which takes one
+            string, rather than the first string being used and the others ignored. An array of
+            strings, such as 'char *[3]', still takes a vector of up to that many strings.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
 2026-10-08: wsfulton
             [R] A bool returned by reference, such as 'const bool &', or by an OUTPUT or INOUT
             typemap is now an R logical rather than an integer.
@@ -171,9 +421,9 @@ Version 4.6.0 (in progress)
             [R] Fix a parameter that is a fixed size array of strings, such as 'char *strs[3]',
             which was given the bytes of the first string in place of the array of pointers,
             usually crashing. A character vector is now converted to the array, with any elements
-            past the end of a shorter vector set to NULL. A longer vector, or NULL, is an error. A
-            member or global variable of this type, which was set the same way, now keeps copies of
-            the strings, as for 'char *'.
+            past the end of a shorter vector set to NULL. A longer vector is an error. NULL is
+            passed as a NULL pointer. A member or global variable of this type, which was set the
+            same way, now keeps copies of the strings, as for 'char *'.
 
 2026-10-07: wsfulton
             [Octave, Perl, Python, Ruby] Fix a crash when C++ calls a director method that has a
@@ -189,16 +439,10 @@ Version 4.6.0 (in progress)
             *** POTENTIAL INCOMPATIBILITY ***
 
 2026-10-06: wsfulton
-            [C#, D, Java, Lua, OCaml, PHP] NULL, such as null in Java, is no longer accepted for a
-            char array parameter of any size, such as 'char [8]' or 'char []'. An error is raised
-            instead. Previously it was passed on as a NULL pointer, or as an empty string in PHP.
-
-            *** POTENTIAL INCOMPATIBILITY ***
-
-2026-10-06: wsfulton
-            [Javascript, Octave, Perl, Python, Ruby] NULL, such as None in Python, for a fixed size
-            char array parameter, such as 'char [8]', is now passed on as a NULL pointer, as for
-            any other array parameter, instead of as a zero filled array.
+            [Javascript, Octave, Perl, PHP, Python, Ruby] NULL, such as None in Python, for a fixed
+            size char array parameter, such as 'char [8]', is now passed on as a NULL pointer, as
+            for any other array parameter, instead of as a zero filled array. In PHP NULL is also
+            passed on for a 'char []' parameter, which was given an empty string.
 
             *** POTENTIAL INCOMPATIBILITY ***
 
@@ -218,19 +462,17 @@ Version 4.6.0 (in progress)
             is now raised instead.
 
 2026-10-06: wsfulton
-            [R] NULL for a fixed size char array parameter, such as 'char [8]', or a
-            'const char []' one, is now passed on as a NULL pointer, as for any other array
-            parameter, instead of giving an R error. NULL for a 'char []' parameter, or set on a
-            char array member or global variable, now gives a SWIG NullReferenceError instead of the
-            R internal error "CHAR() can only be applied to a 'CHARSXP', not a 'NULL'".
+            [R] NULL for a char array parameter, such as 'char [8]' or 'char []', is now passed on
+            as a NULL pointer, as for any other array parameter, instead of giving an R error. NULL
+            set on a char array member or global variable now gives a SWIG NullReferenceError
+            instead of the R internal error "CHAR() can only be applied to a 'CHARSXP', not a
+            'NULL'".
 
 2026-10-06: wsfulton
-            [C] When wrapping C++, NULL is no longer accepted for a char array parameter of any
-            size, such as 'char [8]' or 'char []', nor when setting a char array member or global
-            variable, as NULL is not a valid input for an array in C. SWIG_exception is called
-            with SWIG_NullReferenceError instead, which raises a SWIG_CException. The wrapped
-            function is not called. Previously NULL was passed on. Setting a member to NULL cleared
-            only its first char.
+            [C] When wrapping C++, setting a char array member or global variable, such as
+            'char [8]', to NULL now calls SWIG_exception with SWIG_NullReferenceError, which raises
+            a SWIG_CException, as there is nothing to copy. Previously only its first char was
+            cleared.
 
             *** POTENTIAL INCOMPATIBILITY ***
 
@@ -337,11 +579,15 @@ Version 4.6.0 (in progress)
             having no room for a NUL terminator.
 
 2026-10-05: wsfulton
-            [OCaml] signed char and unsigned char arrays are now wrapped as arrays, as in the other
-            target languages, instead of as strings. Like the other integer arrays, they need array
-            typemaps, such as those in carray.i, which now include them. As strings, a function
-            reading a whole fixed size array read past the end of a shorter string. A global
-            variable was set with strcpy, writing past the end of the array for a long string.
+            [OCaml] signed char and unsigned char arrays are now wrapped as the other integer arrays
+            are and as in the other target languages, instead of as strings: as a pointer to the
+            first element by default, or as an OCaml array with the carray.i typemaps, which now
+            include them. As strings, a function reading a whole fixed size array read past the end
+            of a shorter string. A global variable was set with strcpy, writing past the end of the
+            array for a long string. To wrap them as strings as before, apply the char array
+            typemaps:
+
+              %apply char [ANY] { signed char [ANY], unsigned char [ANY] }
 
             A NULL argument for a reference to a char array, such as 'char (&)[8]', now raises
             Invalid_argument instead of crashing.
@@ -1822,6 +2068,13 @@ Version 4.6.0 (in progress)
             are not type hints and are never type checked, so code that exists solely for a
             type checker has no purpose in them. A stub with no annotations at all, from -pyi
             used without -typehints, still declares all three.
+
+2026-09-05: vadz
+            [C] #3552 Fix wrapping functions taking or returning bool by const reference.
+            This parameter type wasn't handled correctly before and resulted in a crash.
+            bool now uses the same typemaps as the other primitive types, which also fixes
+            the invalid declarations generated for bool arrays and maps "const bool *" to
+            "const bool *", and not "bool *", in the wrappers, as for the other types.
 
 2026-08-31: wsfulton
             [Python] #3528 A .pyi stub file is now generated for the low-level C/C++ module when

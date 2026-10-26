@@ -17,6 +17,19 @@
 
 %include <phpinit.swg> // PHP initialization routine.
 
+/* For swigcommon.swg: raise the error and leave the wrapper */
+%fragment("SWIG_exception_fail", "header") %{
+#define SWIG_exception_fail(code, msg) do { zend_throw_exception( \
+    code == SWIG_TypeError ? zend_ce_type_error : \
+    code == SWIG_ValueError ? zend_ce_value_error : \
+    code == SWIG_DivisionByZero ? zend_ce_division_by_zero_error : \
+    code == SWIG_SyntaxError ? zend_ce_parse_error : \
+    code == SWIG_OverflowError ? zend_ce_arithmetic_error : \
+    code == SWIG_NullReferenceError ? zend_ce_type_error : \
+    NULL, msg, code); SWIG_fail; } while (0)
+%}
+%include <swigcommon.swg>
+
 %include <const.i>
 
 // use %init %{ "/*code goes here*/ " %}
@@ -78,26 +91,26 @@
 // Copy into a zero filled char array as the string passed may be shorter than the array
 %typemap(in, phptype="string", fragment="SWIG_CopyCharArray") char[ANY] (char temp[$1_dim0])
 %{
-   if (Z_TYPE($input) == IS_NULL) {
-     zend_type_error("Invalid null reference for argument $argnum of $symname");
-     SWIG_fail;
+   if (Z_ISNULL($input)) {
+     $1 = 0;
+   } else {
+     convert_to_string(&$input);
+     if (!SWIG_CopyCharArray(temp, $1_dim0, Z_STRVAL($input), Z_STRLEN($input))) {
+       zend_value_error("String too long for char array argument $argnum of $symname");
+       SWIG_fail;
+     }
+     $1 = ($1_ltype)temp;
    }
-   convert_to_string(&$input);
-   if (!SWIG_CopyCharArray(temp, $1_dim0, Z_STRVAL($input), Z_STRLEN($input))) {
-     zend_value_error("String too long for char array argument $argnum of $symname");
-     SWIG_fail;
-   }
-   $1 = ($1_ltype)temp;
 %}
 
 %typemap(in, phptype="string") char[]
 %{
-   if (Z_TYPE($input) == IS_NULL) {
-     zend_type_error("Invalid null reference for argument $argnum of $symname");
-     SWIG_fail;
+   if (Z_ISNULL($input)) {
+     $1 = 0;
+   } else {
+     convert_to_string(&$input);
+     $1 = ($1_ltype) Z_STRVAL($input);
    }
-   convert_to_string(&$input);
-   $1 = ($1_ltype) Z_STRVAL($input);
 %}
 
 /* String & length typemap */
@@ -657,9 +670,21 @@
 
 /* Array reference typemaps */
 %apply SWIGTYPE & { SWIGTYPE ((&)[ANY]) }
-%typemap(memberin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
 %apply char[ANY] { char (&)[ANY] }
+/* Unlike for a char array, NULL is not accepted, as a reference cannot be bound to NULL */
+%typemap(in, phptype="string", fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0])
+%{
+   if (Z_TYPE($input) == IS_NULL) {
+     zend_type_error("Invalid null reference for argument $argnum of $symname");
+     SWIG_fail;
+   }
+   convert_to_string(&$input);
+   if (!SWIG_CopyCharArray(temp, $1_dim0, Z_STRVAL($input), Z_STRLEN($input))) {
+     zend_value_error("String too long for char array argument $argnum of $symname");
+     SWIG_fail;
+   }
+   $1 = &temp;
+%}
 %typemap(out, phptype="string") char (&)[ANY]
 {
   size_t len = 0;

@@ -166,18 +166,6 @@ std::ptrdiff_t *INOUT
 #  assert(length($input) >= $1_dim0)
 %}
 
-/* Handling vector case to avoid warnings,
-   although we just use the first one. */
-%typemap(scheck) unsigned int %{
-  assert(length($input) == 1 && $input >= 0, "All values must be non-negative");
-%}
-
-
-%typemap(scheck) int, long %{
-  if(length($input) > 1) {
-     warning("using only the first element of $input");
-  };
-%}
 
 %include <typemaps/fragments.swg>
 %include <rfragments.swg>
@@ -230,7 +218,7 @@ std::ptrdiff_t *INOUT
 %r_fixed_size_array(double, REALSXP, REAL, double)
 
 %typemap(in,noblock=1,fragment="SWIG_strdup") char * {
-  if (!Rf_isNull($input) && Rf_length($input) == 0) {
+  if (!Rf_isNull($input) && Rf_length($input) != 1) {
     %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
   }
   $1 = Rf_isNull($input) ? 0 : %reinterpret_cast(SWIG_strdup(CHAR(STRING_ELT($input, 0))), $1_ltype);
@@ -241,12 +229,9 @@ std::ptrdiff_t *INOUT
 }
 
 %typemap(in,noblock=1,fragment="SWIG_strdup") char *[ANY] (char *temp[$1_dim0], char *copies[$1_dim0]) {
-  {
+  if (!Rf_isNull($input)) {
     int i;
     int len = Rf_length($input);
-    if (Rf_isNull($input)) {
-      %argument_nullref("$type", $symname, $argnum);
-    }
     if (!Rf_isString($input)) {
       %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
     }
@@ -293,12 +278,13 @@ std::ptrdiff_t *INOUT
 /* char[ANY] uses the Lib/typemaps typemaps, which copy the string into a zero filled array of the declared size */
 %typemap(in,noblock=1,fragment="SWIG_strdup") char[] {
     if (Rf_isNull($input)) {
-      %argument_nullref("$type", $symname, $argnum);
+      $1 = 0;
+    } else {
+      if (Rf_length($input) != 1) {
+        %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
+      }
+      $1 = SWIG_strdup(CHAR(STRING_ELT($input, 0)));
     }
-    if (Rf_length($input) == 0) {
-      %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
-    }
-    $1 = SWIG_strdup(CHAR(STRING_ELT($input, 0)));
 }
 
 %typemap(freearg,noblock=1) char[] {
@@ -306,7 +292,7 @@ std::ptrdiff_t *INOUT
 }
 
 %typemap(in,noblock=1) const enum SWIGTYPE & ($*1_ltype temp) {
-  if (Rf_length($input) == 0) {
+  if (Rf_length($input) != 1) {
     %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
   }
   temp = ($*1_ltype)INTEGER($input)[0];
@@ -319,7 +305,7 @@ std::ptrdiff_t *INOUT
  {  $result = $1 ? Rf_mkString(%reinterpret_cast($1,char *)) : R_NilValue; }
 
 %typemap(in,noblock=1) char {
-  if (Rf_length($input) == 0) {
+  if (Rf_length($input) != 1) {
     %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
   }
   $1 = %static_cast(CHAR(STRING_ELT($input, 0))[0],$1_ltype);
@@ -335,7 +321,7 @@ std::ptrdiff_t *INOUT
 
 %typemap(in,noblock=1) int, long
 {
-  if (Rf_length($input) == 0) {
+  if (Rf_length($input) != 1) {
     %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
   }
   $1 = %static_cast(INTEGER($input)[0], $1_ltype);
@@ -347,7 +333,7 @@ std::ptrdiff_t *INOUT
 
 %typemap(in,noblock=1) bool
 {
-  if (Rf_length($input) == 0) {
+  if (Rf_length($input) != 1) {
     %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
   }
   $1 = LOGICAL($input)[0] ? true : false;
@@ -361,7 +347,7 @@ std::ptrdiff_t *INOUT
              float, 
              double
 {
-  if (Rf_length($input) == 0) {
+  if (Rf_length($input) != 1) {
     %argument_fail(SWIG_TypeError, "$type", $symname, $argnum);
   }
   $1 = %static_cast(REAL($input)[0], $1_ltype);
