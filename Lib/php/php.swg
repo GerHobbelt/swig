@@ -78,6 +78,10 @@
 // Copy into a zero filled char array as the string passed may be shorter than the array
 %typemap(in, phptype="string", fragment="SWIG_CopyCharArray") char[ANY] (char temp[$1_dim0])
 %{
+   if (Z_TYPE($input) == IS_NULL) {
+     zend_type_error("Invalid null reference for argument $argnum of $symname");
+     SWIG_fail;
+   }
    convert_to_string(&$input);
    if (!SWIG_CopyCharArray(temp, $1_dim0, Z_STRVAL($input), Z_STRLEN($input))) {
      zend_value_error("String too long for char array argument $argnum of $symname");
@@ -88,6 +92,10 @@
 
 %typemap(in, phptype="string") char[]
 %{
+   if (Z_TYPE($input) == IS_NULL) {
+     zend_type_error("Invalid null reference for argument $argnum of $symname");
+     SWIG_fail;
+   }
    convert_to_string(&$input);
    $1 = ($1_ltype) Z_STRVAL($input);
 %}
@@ -385,6 +393,17 @@
       ZVAL_STRING($input, (const char*)$1);
     }
 %}
+
+/* The NULL check is of a copy of $1, as checking a char (&)[ANY] reference itself gives a gcc -Waddress warning */
+%typemap(directorin, fragment="SWIG_CharArrayLength") char [ANY]
+%{ {
+    const char *swig_buf = (const char *)$1;
+    if(!swig_buf) {
+      ZVAL_NULL($input);
+    } else {
+      ZVAL_STRINGL($input, swig_buf, SWIG_CharArrayLength(swig_buf, $1_dim0));
+    }
+  } %}
 
 %typemap(out, phptype="bool") bool
 %{

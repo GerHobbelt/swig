@@ -151,12 +151,9 @@ func main() {
 		}
 	}
 
-	for i := uint(0); i < count; i++ {
-		expected := OTHERLAND_MSG + strconv.Itoa(int(i))
-		char_strings.SetGlobal_char_array1(expected)
-		if char_strings.GetGlobal_char_array1() != expected {
-			panic("Test variables 2 failed, iteration " + strconv.Itoa(int(i)))
-		}
+	// global_char_array1 is a char[] with no size, so it is read only
+	if char_strings.GetGlobal_char_array1() != CPLUSPLUS_MSG {
+		panic("Test variables 2 failed")
 	}
 
 	for i := uint(0); i < count; i++ {
@@ -168,6 +165,32 @@ func main() {
 	}
 	if !panics(func() { char_strings.SetGlobal_char_array2(CPLUSPLUS_MSG + CPLUSPLUS_MSG) }) {
 		panic("Test variables 3 overlong string failed")
+	}
+	if char_strings.GetChar_array_no_nul().GetFull() != "abcd" || char_strings.GetChar_array_no_nul().GetAfter() != "XYZ" {
+		panic("Test full char array failed")
+	}
+	char_strings.SetGlobal_char_one("a")
+	one := char_strings.NewCharArrayOne()
+	one.SetOne("b")
+	if char_strings.GetGlobal_char_one() != "a" || one.GetOne() != "b" {
+		panic("Test char[1] failed")
+	}
+
+	// Go has no null string, so test an empty string is passed as one
+	if char_strings.CharArrayPingPong("") != "" || char_strings.CharArrayDimsPingPong("") != "" {
+		panic("Test char array empty string failed")
+	}
+	if char_strings.PlainCharPingPong('a') != 'a' {
+		panic("Test char failed")
+	}
+	nullMember := char_strings.GetChar_array_null()
+	if nullMember.GetFour() != "qqq" || char_strings.GetGlobal_char_array_null() != "qqq" {
+		panic("Test char array initial value failed")
+	}
+	nullMember.SetFour("")
+	char_strings.SetGlobal_char_array_null("")
+	if nullMember.GetFour() != "" || char_strings.GetGlobal_char_array_null() != "" {
+		panic("Test char array set to empty string failed")
 	}
 
 	for i := uint(0); i < count; i++ {

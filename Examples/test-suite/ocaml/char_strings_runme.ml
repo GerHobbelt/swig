@@ -47,21 +47,20 @@ let _ =
   assert (_GetCharStaticStringFixed C_void as string = cpp_msg);
   assert (_GetConstCharStaticStringFixed C_void as string = cpp_msg);
 
-  (* set functions.  The char[] parameter variants (SetCharArrayStaticString,
-     SetConstCharArrayStaticString) are omitted: OCaml's char[] 'in' typemap
-     strcpy's into the (null) argument pointer and crashes - a pre-existing
-     char array limitation unrelated to char *&. *)
+  (* set functions *)
   test_set _SetCharHeapString;
   test_set _SetCharStaticString;
+  test_set _SetCharArrayStaticString;
   test_set _SetConstCharHeapString;
   test_set _SetConstCharStaticString;
+  test_set _SetConstCharArrayStaticString;
   test_set _SetCharConstStaticString;
   test_set _SetConstCharConstStaticString;
   test_set _SetConstCharTypedefString;
 
-  (* get set function.  CharArrayPingPong takes a char[] parameter and is
-     omitted for the same char array limitation as above. *)
+  (* get set function *)
   test_pingpong _CharPingPong;
+  test_pingpong _CharArrayPingPong;
   List.iter (fun i ->
     let msg = "Ping" ^ string_of_int i in
     assert (_CharArrayDimsPingPong (C_string msg) as string = msg)
@@ -76,17 +75,27 @@ let _ =
     assert (_global_char (C_string msg) as string = msg);
     assert (_global_char C_void as string = msg)
   ) iters;
-  List.iter (fun i ->
-    let msg = other_msg ^ string_of_int i in
-    assert (_global_char_array1 (C_string msg) as string = msg);
-    assert (_global_char_array1 C_void as string = msg)
-  ) iters;
+  (* global_char_array1 is a char[] with no size, so it is read only *)
+  assert (_global_char_array1 C_void as string = cpp_msg);
+  assert (try ignore (_global_char_array1 (C_string other_msg)); false with Failure _ -> true);
   List.iter (fun i ->
     let msg = other_msg ^ string_of_int i in
     assert (_global_char_array2 (C_string msg) as string = msg);
     assert (_global_char_array2 C_void as string = msg)
   ) iters;
   assert (try ignore (_global_char_array2 (C_string (cpp_msg ^ cpp_msg))); false with Invalid_argument _ -> true);
+  let no_nul = create_CharArrayNoNul_from_ptr (_char_array_no_nul C_void) in
+  assert ((invoke no_nul) "[full]" C_void as string = "abcd");
+  assert ((invoke no_nul) "[after]" C_void as string = "XYZ");
+  assert (_global_char_one (C_string "a") as string = "a");
+  let one = new_CharArrayOne C_void in
+  ignore ((invoke one) "[one]" (C_string "b"));
+  assert ((invoke one) "[one]" C_void as string = "b");
+  assert (try ignore (_CharArrayPingPong (C_list [ C_void ])); false with Invalid_argument _ -> true);
+  assert (try ignore (_CharArrayDimsPingPong (C_list [ C_void ])); false with Invalid_argument _ -> true);
+  let null_member = create_CharArrayNull_from_ptr (_char_array_null C_void) in
+  assert (try ignore ((invoke null_member) "[four]" (C_list [ C_void ])); false with Invalid_argument _ -> true);
+  assert ((invoke null_member) "[four]" C_void as string = "qqq");
 
   (* variables: read-only const globals *)
   assert (_global_const_char C_void as string = cpp_msg);

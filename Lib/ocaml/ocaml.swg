@@ -216,8 +216,9 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 %char_ptr_in(varin);
 %char_ptr_in(directorout);
 
+/* Unlike plain char arrays, signed char and unsigned char arrays are arrays, as in the other target languages, see carray.i */
 %define %char_array_in(how)
-%typemap(how) char [ANY], signed char [ANY], unsigned char [ANY] {
+%typemap(how) char [ANY] {
     $1 = ($ltype)caml_string_val($input);
 }
 %enddef
@@ -225,56 +226,65 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 %char_array_in(in);
 %char_array_in(directorout);
 
-%typemap(varin) signed char [ANY], unsigned char [ANY] {
-    char *temp = caml_string_val($input);
-    strcpy((char *)$1,temp);
-}
-
-/* Override the above for plain char arrays, copying into a zero filled array as the string may be shorter than the array */
+/* Override the above, copying into a zero filled array as the string may be shorter than the array */
 %typemap(in, fragment="SWIG_CopyCharArray") char [ANY] (char temp[$1_dim0]) {
     char *str = caml_string_val($input);
-    $1 = 0;
-    if (str) {
-        if (!SWIG_CopyCharArray(temp, $1_dim0, str, (size_t)caml_string_len($input))) {
-            SWIG_OCamlThrowException(SWIG_OCamlIllegalArgumentException, "string too long for char array");
-        }
-        $1 = ($ltype)temp;
+    if (!str) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
     }
+    if (!SWIG_CopyCharArray(temp, $1_dim0, str, (size_t)caml_string_len($input))) {
+        SWIG_OCamlThrowException(SWIG_OCamlIllegalArgumentException, "string too long for char array");
+    }
+    $1 = ($ltype)temp;
 }
 
 %typemap(varin, fragment="SWIG_CopyCharArray") char [ANY] {
     char *str = caml_string_val($input);
-    if (!SWIG_CopyCharArray((char *)$1, $1_dim0, str, str ? (size_t)caml_string_len($input) : 0)) {
+    if (!str) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    }
+    if (!SWIG_CopyCharArray((char *)$1, $1_dim0, str, (size_t)caml_string_len($input))) {
         SWIG_OCamlThrowException(SWIG_OCamlIllegalArgumentException, "string too long for char array");
     }
 }
 
 %typemap(in) char [] %{
     $1 = ($ltype)caml_string_val($input);
+    if (!$1) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    }
 %}
 
-%typemap(varin) char [] {
-    char *temp = caml_string_val($input);
-    strcpy((char *)$1,temp);
-}
+/* Read only, as there is no size to bound the copy */
+%typemap(varin, warning=SWIGWARN_TYPEMAP_VARIN_UNDEF_MSG) char [] %{
+    caml_failwith("read-only $name");
+%}
 
 %define %char_ptr_out(how)
-%typemap(how) 
-    char *, signed char *, unsigned char *, 
-    const char *, const signed char *, const unsigned char * {
+%typemap(how)
+    char *, signed char *, unsigned char *,
+    const char *, const signed char *, const unsigned char *,
+    char [], const char [] {
     $result = caml_val_string((char *)$1);
 }
-/* I'd like to use the length here but can't because it might be empty */
-%typemap(how)
-    char [ANY], signed char [ANY], unsigned char [ANY],
-    const char [ANY], const signed char [ANY], const unsigned char [ANY] {
-    $result = caml_val_string((char *)$1);
+/* A full array has no NUL terminator, so the string is limited to the array size */
+%typemap(how, fragment="SWIG_CharArrayLength") char [ANY], const char [ANY] {
+    $result = caml_val_string_len((char *)$1, $1 ? (int)SWIG_CharArrayLength((const char *)$1, $1_dim0) : 0);
 }
 %enddef
 
 %char_ptr_out(out);
 %char_ptr_out(varout);
-%char_ptr_out(directorin);
+
+%typemap(directorin)
+    char *, signed char *, unsigned char *,
+    const char *, const signed char *, const unsigned char *,
+    char [], const char [] {
+    args = caml_list_append(args, caml_val_string((char *)$1));
+}
+%typemap(directorin, fragment="SWIG_CharArrayLength") char [ANY], const char [ANY] %{
+    args = caml_list_append(args, caml_val_string_len((char *)$1, (int)SWIG_CharArrayLength((const char *)$1, $1_dim0)));
+%}
 
 %define %swigtype_ptr_in(how)
 %typemap(how) SWIGTYPE * {

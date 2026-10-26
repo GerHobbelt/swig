@@ -4,6 +4,14 @@
 
 #include "char_strings/char_strings_wrap.h"
 
+static void check_null_rejected(const char *test) {
+  if (!char_strings_SWIG_CException_get_pending()) {
+    fprintf(stderr, "Test %s NULL failed\n", test);
+    exit(1);
+  }
+  char_strings_SWIG_CException_reset_pending();
+}
+
 int main() {
   const char *CPLUSPLUS_MSG = "A message from the deep dark world of C++, where anything is possible.";
   const char *OTHERLAND_MSG = "Little message from the safe world.";
@@ -178,14 +186,10 @@ int main() {
     }
   }
 
-  for (i=0; i<count; i++) {
-    char str[256];
-    sprintf(str, "%s%d", OTHERLAND_MSG, i);
-    char_strings_global_char_array1_set(str);
-    if (strcmp(char_strings_global_char_array1_get(), str) != 0) {
-      fprintf(stderr, "Test variables 2 failed, iteration %d\n", i);
-      exit(1);
-    }
+  /* global_char_array1 is a char[] with no size, so it is read only */
+  if (strcmp(char_strings_global_char_array1_get(), CPLUSPLUS_MSG) != 0) {
+    fprintf(stderr, "Test variables 2 failed\n");
+    exit(1);
   }
 
   for (i=0; i<count; i++) {
@@ -196,6 +200,20 @@ int main() {
       fprintf(stderr, "Test variables 3 failed, iteration %d\n", i);
       exit(1);
     }
+  }
+
+  char_strings_CharArrayPingPong(NULL);
+  check_null_rejected("char array");
+  char_strings_CharArrayDimsPingPong(NULL);
+  check_null_rejected("char array dims");
+  char_strings_CharArrayNull_four_set(char_strings_char_array_null_get(), NULL);
+  check_null_rejected("char array member set");
+  char_strings_global_char_array_null_set(NULL);
+  check_null_rejected("char array global set");
+  if (strcmp(char_strings_CharArrayNull_four_get(char_strings_char_array_null_get()), "qqq") != 0 ||
+      strcmp(char_strings_global_char_array_null_get(), "qqq") != 0) {
+    fprintf(stderr, "Test char array set to NULL changed it\n");
+    exit(1);
   }
 
   for (i=0; i<count; i++) {

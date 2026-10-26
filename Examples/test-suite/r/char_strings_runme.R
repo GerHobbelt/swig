@@ -99,21 +99,58 @@ for (i in 0:(count-1)) {
   unittest(global_char_get(), expected)
 }
 
-# global_char_array1 / global_char_array2 read-back is omitted: the generated R
-# getters return type '_p_char' and the R proxy wraps the (correct) string into
-# new("_p_char", ref=...), an undefined S4 class which errors.  The setters run
-# without error, but there is no working accessor to verify the value.
-global_char_array2_set(OTHERLAND_MSG)
+# global_char_array1 is a char[] with no size, so it is read only
+unittest(exists("global_char_array1_set"), FALSE)
+unittest(global_char_array1_get(), CPLUSPLUS_MSG)
+for (i in 0:(count-1)) {
+  expected = paste0(OTHERLAND_MSG, i)
+  global_char_array2_set(expected)
+  unittest(global_char_array2_get(), expected)
+}
 exception_thrown = FALSE
 tryCatch(global_char_array2_set(paste0(CPLUSPLUS_MSG, CPLUSPLUS_MSG)), error = function(e) exception_thrown <<- TRUE)
 unittest(exception_thrown, TRUE)
+
+no_nul = char_array_no_nul_get()
+unittest(no_nul$full, "abcd")
+unittest(no_nul$after, "XYZ")
+
+global_char_one_set("a")
+unittest(global_char_one_get(), "a")
+one = CharArrayOne()
+one$one <- "b"
+unittest(one$one, "b")
+
+null_message = function(f) {
+  msg = ""
+  tryCatch(f(), error = function(e) msg <<- conditionMessage(e))
+  msg
+}
+null_member = char_array_null_get()
+unittest(grepl("^SWIG:TypeError", null_message(function() CharArrayPingPong(NULL))), TRUE)
+unittest(grepl("^SWIG:TypeError", null_message(function() CharArrayDimsPingPong(NULL))), TRUE)
+unittest(grepl("^SWIG:TypeError", null_message(function() null_member$four <- NULL)), TRUE)
+unittest(grepl("^SWIG:TypeError", null_message(function() global_char_array_null_set(NULL))), TRUE)
+unittest(null_member$four, "qqq")
+unittest(global_char_array_null_get(), "qqq")
+
+unittest(CharPtrArrayJoin(c("a", "bc", "def")), "a|bc|def")
+unittest(CharPtrArrayJoin(c("a", "bc")), "a|bc|NULL")
+unittest(grepl("^SWIG:OverflowError", null_message(function() CharPtrArrayJoin(c("a", "b", "c", "d")))), TRUE)
+unittest(CharPtrArrayReplaceFirst(c("a", "b", "c")), "replaced")
+holder <- CharPtrArrayHolder()
+holder$strs <- c("one", "two")
+unittest(CharPtrArrayHolderJoin(holder), "one|two|NULL")
+global_char_ptr_array_set(c("x", "y", "z"))
+unittest(GlobalCharPtrArrayJoin(), "x|y|z")
+unittest(grepl("^SWIG:TypeError", null_message(function() CharPtrArrayJoin(NULL))), TRUE)
 
 for (i in 0:(count-1)) {
   unittest(global_const_char_get(), CPLUSPLUS_MSG)
 }
 
-# global_const_char_array1 / global_const_char_array2 read-back is omitted for
-# the same '_p_char' proxy limitation as the mutable char array globals above.
+unittest(global_const_char_array1_get(), CPLUSPLUS_MSG)
+unittest(global_const_char_array2_get(), CPLUSPLUS_MSG)
 
 # char *& tests
 for (i in 0:(count-1)) {

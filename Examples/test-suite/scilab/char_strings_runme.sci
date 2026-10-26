@@ -82,6 +82,11 @@ for i = 0:count-1
   checkequal(CharArrayDimsPingPong(ping), ping, "CharArrayDimsPingPong()");
 end
 
+checkequal(CharArrayDimsLength("Ping"), 4, "CharArrayDimsLength()");
+checkequal(CharArrayDimsLength("0123456789abcde"), 15, "CharArrayDimsLength()");
+ierr = execstr("CharArrayDimsLength(""0123456789abcdef"")", "errcatch");
+if ierr == 0 then swigtesterror("CharArrayDimsLength() error expected"); end
+
 // variables
 for i = 0:count-1
   expected = OTHERLAND_MSG + string(i);
@@ -100,6 +105,24 @@ for i = 0:count-1
   global_char_array2_set(expected);
   checkequal(global_char_array2_get(), expected, "global_char_array2");
 end
+global_char_array2_set(CPLUSPLUS_MSG + "!");
+checkequal(global_char_array2_get(), CPLUSPLUS_MSG + "!", "global_char_array2");
+ierr = execstr("global_char_array2_set(CPLUSPLUS_MSG + ""!!"")", "errcatch");
+if ierr == 0 then swigtesterror("global_char_array2_set() error expected"); end
+
+// NULL ([]) is rejected for a char array or char
+null_calls = ["CharArrayPingPong([])", "CharArrayDimsPingPong([])", "PlainCharPingPong([])", ..
+              "CharArrayNull_four_set(char_array_null_get(), [])", "global_char_array_null_set([])"];
+for i = 1:size(null_calls, "*")
+  ierr = execstr(null_calls(i), "errcatch");
+  if ierr == 0 then swigtesterror(null_calls(i) + " error expected"); end
+end
+checkequal(CharArrayNull_four_get(char_array_null_get()), "qqq", "CharArrayNull_four_get()");
+checkequal(global_char_array_null_get(), "qqq", "global_char_array_null_get()");
+
+no_nul = char_array_no_nul_get();
+checkequal(CharArrayNoNul_full_get(no_nul), "abcd", "CharArrayNoNul_full_get()");
+checkequal(CharArrayNoNul_after_get(no_nul), "XYZ", "CharArrayNoNul_after_get()");
 
 for i = 0:count-1
   checkequal(global_const_char_get(), CPLUSPLUS_MSG, "global_const_char");

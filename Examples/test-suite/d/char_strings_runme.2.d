@@ -4,6 +4,7 @@ import std.conv;
 import std.exception;
 import std.range;
 import char_strings.char_strings;
+import char_strings.CharArrayOne;
 
 enum CPLUSPLUS_MSG = "A message from the deep dark world of C++, where anything is possible.";
 enum OTHERLAND_MSG = "Little message from the safe world.";
@@ -100,11 +101,9 @@ void main() {
     enforce(global_char == msg, "Test variables 1 failed, iteration " ~ to!string(i));
   }
 
-  foreach (i; TEST_RANGE) {
-    const msg = OTHERLAND_MSG ~ to!string(i);
-    global_char_array1 = msg;
-    enforce(global_char_array1 == msg, "Test variables 2 failed, iteration " ~ to!string(i));
-  }
+  // global_char_array1 is a char[] with no size, so it is read only
+  static assert(!__traits(compiles, global_char_array1 = "x"));
+  enforce(global_char_array1 == CPLUSPLUS_MSG, "Test variables 2 failed");
 
   foreach (i; TEST_RANGE) {
     const msg = OTHERLAND_MSG ~ to!string(i);
@@ -113,6 +112,16 @@ void main() {
   }
 
   enforce(collectException(global_char_array2 = CPLUSPLUS_MSG ~ CPLUSPLUS_MSG) !is null, "Test variables 3 overlong string failed");
+  enforce(char_array_no_nul.full == "abcd" && char_array_no_nul.after == "XYZ", "Test full char array failed");
+  global_char_one = "a";
+  auto one = new CharArrayOne();
+  one.one = "b";
+  enforce(global_char_one == "a" && one.one == "b", "Test char[1] failed");
+  enforce(collectException(CharArrayPingPong(null)) !is null, "Test char array null failed");
+  enforce(collectException(CharArrayDimsPingPong(null)) !is null, "Test char array dims null failed");
+  enforce(collectException(char_array_null.four = null) !is null, "Test char array member set to null failed");
+  enforce(collectException(global_char_array_null = null) !is null, "Test char array global set to null failed");
+  enforce(char_array_null.four == "qqq" && global_char_array_null == "qqq", "Test char array set to null changed it");
 
   foreach (i; TEST_RANGE) {
     enforce(global_const_char == CPLUSPLUS_MSG, "Test variables 4 failed, iteration " ~ to!string(i));

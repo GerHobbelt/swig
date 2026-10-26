@@ -57,5 +57,32 @@
 ;; A string too long for a char[16] argument is an error rather than read past the end of the array.
 (check (string=? (CharArrayDimsPingPong "fifteen chars..") "fifteen chars.."))
 (expect-throw 'wrong-type-arg (CharArrayDimsPingPong "sixteen chars..."))
+(check (= (CharArrayDimsLength "Ping") 4))
+(check (= (CharArrayDimsLength "0123456789abcde") 15))
+
+;; global_char_array1 is a char[] with no size, so it is read only
+(expect-throw 'wrong-type-arg (global-char-array1 "x"))
+(check (string=? (global-char-array1) CPLUSPLUS_MSG))
+
+;; A string that does not fit in a global char array along with its NUL is an error rather than truncated.
+(global-char-array2 (string-append CPLUSPLUS_MSG "!"))
+(check (string=? (global-char-array2) (string-append CPLUSPLUS_MSG "!")))
+(expect-throw 'wrong-type-arg (global-char-array2 (string-append CPLUSPLUS_MSG "!!")))
+(check (string=? (global-char-array2) (string-append CPLUSPLUS_MSG "!")))
+
+(check (string=? (CharArrayNoNul-full-get (char-array-no-nul)) "abcd"))
+(check (string=? (CharArrayNoNul-after-get (char-array-no-nul)) "XYZ"))
+(global-char-one "a")
+(check (string=? (global-char-one) "a"))
+(define one (new-CharArrayOne))
+(CharArrayOne-one-set one "b")
+(check (string=? (CharArrayOne-one-get one) "b"))
+
+(expect-throw 'wrong-type-arg (CharArrayPingPong #nil))
+(expect-throw 'wrong-type-arg (CharArrayDimsPingPong #nil))
+(expect-throw 'wrong-type-arg (CharArrayNull-four-set (char-array-null) #nil))
+(expect-throw 'wrong-type-arg (global-char-array-null #nil))
+(check (string=? (CharArrayNull-four-get (char-array-null)) "qqq"))
+(check (string=? (global-char-array-null) "qqq"))
 
 (exit 0)

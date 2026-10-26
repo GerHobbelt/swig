@@ -36,8 +36,9 @@ try {
 Global_char_set($OTHERLAND_MSG_10);
 check::equal(Global_char_get(), $OTHERLAND_MSG_10, "failed Global_char_get");
 
-Global_char_array1_set($OTHERLAND_MSG_10);
-check::equal(Global_char_array1_get(), $OTHERLAND_MSG_10, "failed Global_char_array1_get");
+// global_char_array1 is a char[] with no size, so it is read only
+check::equal(function_exists('global_char_array1_set'), false, "global_char_array1 has a setter");
+check::equal(Global_char_array1_get(), $CPLUSPLUS_MSG, "failed Global_char_array1_get");
 
 Global_char_array2_set($OTHERLAND_MSG_10);
 check::equal(Global_char_array2_get(), $OTHERLAND_MSG_10, "failed Global_char_array2_get");
@@ -46,6 +47,23 @@ try {
   check::fail("Global_char_array2_set overlong string");
 } catch (ValueError $e) {
 }
+
+Global_char_one_set("a");
+check::equal(Global_char_one_get(), "a", "failed Global_char_one_get");
+$one = new CharArrayOne();
+$one->one = "b";
+check::equal($one->one, "b", "failed CharArrayOne one");
+
+foreach ([fn() => CharArrayPingPong(null), fn() => CharArrayDimsPingPong(null),
+          fn() => Char_array_null_get()->four = null, fn() => Global_char_array_null_set(null)] as $i => $f) {
+  try {
+    $f();
+    check::fail("char array null $i accepted");
+  } catch (TypeError $e) {
+  }
+}
+check::equal(Char_array_null_get()->four, "qqq", "failed char array member set to null");
+check::equal(Global_char_array_null_get(), "qqq", "failed char array global set to null");
 
 check::equal(Global_const_char_get(), $CPLUSPLUS_MSG, "failed Global_const_char");
 check::equal(Global_const_char_array1_get(), $CPLUSPLUS_MSG, "failed Global_const_char_array1");

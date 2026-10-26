@@ -255,6 +255,20 @@ string &, std::string &
 		     unsigned char &
  %{    %}
 
+/* A char array is a string, as for char *. An array of strings is a character vector */
+%typemap("rtype") char [ANY], char [], char (&)[ANY] "character"
+%typemap("rtype") char *[ANY] "character"
+%typemap("rtypecheck") char *[ANY]
+  %{ is.character($arg) %}
+%typemap(scoercein) char *[ANY]
+  %{  $input = as($input, "character"); %}
+%typemap("rtypecheck") char [ANY], char [], char (&)[ANY]
+  %{ is.character($arg) %}
+%typemap(scoercein) char [ANY], char [], char (&)[ANY]
+  %{  $input = as($input, "character"); %}
+%typemap(scoerceout) char [ANY], char [], char (&)[ANY]
+  %{    %}
+
 %apply int {size_t,
 std::size_t,
 ptrdiff_t,

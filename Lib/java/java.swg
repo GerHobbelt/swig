@@ -753,8 +753,10 @@ Swig::LocalRefGuard $1_refguard(jenv, $input); }
 
 /* char arrays - treat as String, copying into a zero filled array when the size is known */
 %typemap(in, noblock=1, fragment="SWIG_CopyCharArray") char[ANY] (char temp[$1_dim0]) {
-  $1 = 0;
-  if ($input) {
+  if (!$input) {
+    SWIG_JavaThrowException(jenv, SWIG_JavaNullPointerException, "$1_type is null");
+    return $null;
+  } else {
     const char *$1_pstr = JCALL2(GetStringUTFChars, jenv, $input, 0);
     int $1_copied;
     if (!$1_pstr)
@@ -770,11 +772,12 @@ Swig::LocalRefGuard $1_refguard(jenv, $input); }
 }
 
 %typemap(in, noblock=1) char[] {
-  $1 = 0;
-  if ($input) {
-    $1 = ($1_ltype)JCALL2(GetStringUTFChars, jenv, $input, 0);
-    if (!$1) return $null;
+  if (!$input) {
+    SWIG_JavaThrowException(jenv, SWIG_JavaNullPointerException, "$1_type is null");
+    return $null;
   }
+  $1 = ($1_ltype)JCALL2(GetStringUTFChars, jenv, $input, 0);
+  if (!$1) return $null;
 }
 
 %typemap(directorout, noblock=1) char[ANY], char[] {
@@ -785,7 +788,21 @@ Swig::LocalRefGuard $1_refguard(jenv, $input); }
   }
 }
 
-%typemap(directorin, descriptor="Ljava/lang/String;", noblock=1) char[ANY], char[] {
+/* No NULL check of $1 itself, as it is never NULL for the char (&)[ANY] typemap applied from this one */
+%typemap(directorin, descriptor="Ljava/lang/String;", noblock=1, fragment="SWIG_CharArrayString") char[ANY] {
+  $input = 0;
+  {
+    const char *swig_str = SWIG_CharArrayString((const char *)$1, $1_dim0);
+    if (swig_str) {
+      $input = JCALL1(NewStringUTF, jenv, swig_str);
+      SWIG_DeleteCharArrayString(swig_str, (const char *)$1);
+      if (!$input)
+        return $null;
+    }
+  }
+  Swig::LocalRefGuard $1_refguard(jenv, $input);
+}
+%typemap(directorin, descriptor="Ljava/lang/String;", noblock=1) char[] {
   $input = 0;
   if ($1) {
     $input = JCALL1(NewStringUTF, jenv, (const char *)$1);
@@ -797,7 +814,15 @@ Swig::LocalRefGuard $1_refguard(jenv, $input); }
 %typemap(argout) char[ANY], char[] ""
 %typemap(freearg) char[ANY] ""
 %typemap(freearg, noblock=1) char[] { if ($1) JCALL2(ReleaseStringUTFChars, jenv, $input, (const char *)$1); }
-%typemap(out, noblock=1) char[ANY], char[] { if ($1) $result = JCALL1(NewStringUTF, jenv, (const char *)$1); }
+%typemap(out, noblock=1, fragment="SWIG_CharArrayString") char[ANY] {
+  if ($1) {
+    const char *swig_str = SWIG_CharArrayString((const char *)$1, $1_dim0);
+    if (swig_str)
+      $result = JCALL1(NewStringUTF, jenv, swig_str);
+    SWIG_DeleteCharArrayString(swig_str, (const char *)$1);
+  }
+}
+%typemap(out, noblock=1) char[] { if ($1) $result = JCALL1(NewStringUTF, jenv, (const char *)$1); }
 %typemap(javadirectorin) char[ANY], char[] "$jniinput"
 %typemap(javadirectorout) char[ANY], char[] "$javacall"
 
@@ -1435,25 +1460,6 @@ SWIG_PROXY_CONSTRUCTOR(true, true, SWIGTYPE)
 %typemap(memberin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
 %typemap(globalin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
 %apply char[ANY] { char (&)[ANY] }
-/* Unlike the string typemaps, null is not accepted, as a reference cannot be bound to null */
-%typemap(in, noblock=1, fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0]) {
-  if (!$input) {
-    SWIG_JavaThrowException(jenv, SWIG_JavaNullPointerException, "$1_type is null");
-    return $null;
-  } else {
-    const char *$1_pstr = JCALL2(GetStringUTFChars, jenv, $input, 0);
-    int $1_copied;
-    if (!$1_pstr)
-      return $null;
-    $1_copied = SWIG_CopyCharArray(temp, $1_dim0, $1_pstr, strlen($1_pstr));
-    JCALL2(ReleaseStringUTFChars, jenv, $input, $1_pstr);
-    if (!$1_copied) {
-      SWIG_JavaThrowException(jenv, SWIG_JavaIllegalArgumentException, "string too long for char array");
-      return $null;
-    }
-    $1 = ($1_ltype)temp;
-  }
-}
 %apply SWIGTYPE && { SWIGTYPE ((&&)[ANY]) }
 
 /* const pointers */

@@ -130,11 +130,11 @@ public class char_strings_runme {
         throw new Exception("Test variables 1 failed, iteration " + i);
     }
 
-    for (i=0; i<count; i++) {
-      char_strings.global_char_array1 = OTHERLAND_MSG + i;
-      if (char_strings.global_char_array1 != OTHERLAND_MSG + i)
-        throw new Exception("Test variables 2 failed, iteration " + i);
-    }
+    // global_char_array1 is a char[] with no size, so it is read only
+    if (typeof(char_strings).GetProperty("global_char_array1").CanWrite)
+      throw new Exception("global_char_array1 has a setter");
+    if (char_strings.global_char_array1 != CPLUSPLUS_MSG)
+      throw new Exception("Test variables 2 failed");
 
     for (i=0; i<count; i++) {
       char_strings.global_char_array2 = OTHERLAND_MSG + i;
@@ -147,6 +147,38 @@ public class char_strings_runme {
       throw new Exception("Test variables 3 overlong string failed");
     } catch (ArgumentException) {
     }
+
+    if (char_strings.char_array_no_nul.full != "abcd" || char_strings.char_array_no_nul.after != "XYZ")
+      throw new Exception("Test full char array failed");
+
+    char_strings.global_char_one = "a";
+    CharArrayOne one = new CharArrayOne();
+    one.one = "b";
+    if (char_strings.global_char_one != "a" || one.one != "b")
+      throw new Exception("Test char[1] failed");
+
+    try {
+      char_strings.CharArrayPingPong(null);
+      throw new Exception("Test char array null failed");
+    } catch (ArgumentNullException) {
+    }
+    try {
+      char_strings.CharArrayDimsPingPong(null);
+      throw new Exception("Test char array dims null failed");
+    } catch (ArgumentNullException) {
+    }
+    try {
+      char_strings.char_array_null.four = null;
+      throw new Exception("Test char array member set to null failed");
+    } catch (ArgumentNullException) {
+    }
+    try {
+      char_strings.global_char_array_null = null;
+      throw new Exception("Test char array global set to null failed");
+    } catch (ArgumentNullException) {
+    }
+    if (char_strings.char_array_null.four != "qqq" || char_strings.global_char_array_null != "qqq")
+      throw new Exception("Test char array set to null changed it");
 
     for (i=0; i<count; i++) {
       if (char_strings.global_const_char != CPLUSPLUS_MSG)

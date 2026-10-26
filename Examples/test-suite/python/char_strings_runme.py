@@ -1,5 +1,6 @@
 import char_strings
 from char_strings import *
+from swig_test_utils import swig_assert_raises
 
 CPLUSPLUS_MSG = "A message from the deep dark world of C++, where anything is possible."
 OTHERLAND_MSG = "Little message from the safe world."
@@ -83,6 +84,11 @@ for i in range(count):
     pong = CharArrayDimsPingPong(ping)
     check_equal(pong, ping, "Test PingPong 3 failed.")
 
+check_equal(CharArrayDimsLength("Ping"), 4, "Test CharArrayDimsLength failed.")
+check_equal(CharArrayDimsLength("0123456789abcde"), 15, "Test CharArrayDimsLength failed.")
+with swig_assert_raises(TypeError):
+    CharArrayDimsLength("0123456789abcdef")
+
 # variables
 for i in range(count):
     expected = OTHERLAND_MSG + str(i)
@@ -108,6 +114,26 @@ for i in range(count):
 
 for i in range(count):
     check_equal(char_strings.cvar.global_const_char_array2, CPLUSPLUS_MSG, "Test variables 6 failed, iteration %d" % i)
+
+check_equal(char_strings.cvar.char_array_no_nul.full, "abcd", "Test full char array failed")
+check_equal(char_strings.cvar.char_array_no_nul.after, "XYZ", "Test full char array failed")
+
+char_strings.cvar.global_char_one = "a"
+check_equal(char_strings.cvar.global_char_one, "a", "Test char[1] failed")
+one = CharArrayOne()
+one.one = "b"
+check_equal(one.one, "b", "Test char[1] failed")
+
+check_equal(CharArrayPingPong(None), None, "Test char array null failed")
+check_equal(CharArrayDimsPingPong(None), None, "Test char array dims null failed")
+with swig_assert_raises(TypeError):
+    PlainCharPingPong(None)
+with swig_assert_raises(TypeError):
+    char_strings.cvar.char_array_null.four = None
+with swig_assert_raises(TypeError):
+    char_strings.cvar.global_char_array_null = None
+check_equal(char_strings.cvar.char_array_null.four, "qqq", "Test char array member set to null failed")
+check_equal(char_strings.cvar.global_char_array_null, "qqq", "Test char array global set to null failed")
 
 # char *& tests
 for i in range(count):
