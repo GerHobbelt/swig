@@ -7,6 +7,81 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-21: wsfulton
+            [OCaml] Fix carray.i for a fixed size array of structs, which failed for any array of
+            wrapped objects. Also fix a fixed size char array parameter, such as 'char a[4]', being
+            freed even though it is a local array, which crashed.
+
+2026-10-20: wsfulton
+            [OCaml] Fix carray.i for an array parameter of unknown size, such as 'int []' or 'Foo []' for
+            a struct or enum Foo. The wrapper code did not compile. The function is now passed a copy of
+            the OCaml array, with the same number of elements.
+
+2026-10-20: wsfulton
+            Fix '$1_dim10' to '$1_dim19' in typemaps, which were replaced as '$1_dim1' followed by a
+            digit for an array with 11 or more dimensions.
+
+2026-10-20: wsfulton
+            Fix a 'throws' typemap that declares a local variable, which gave a wrapper that did not
+            compile, for example:
+
+              %typemap(throws) int (const char *message) {
+                message = $1 == 1 ? "int 1 thrown" : "int thrown";
+                SWIG_exception(SWIG_RuntimeError, message);
+              }
+
+            The local variable was not declared in the catch block that uses it. C#, D and Java also
+            declared an unused local variable in the wrapper, such as 'message1', which is an error
+            with -Werror. The local variable is now declared in the catch block.
+
+2026-10-19: wsfulton
+            [C] Fix the wrapper of a member inherited from a base class ignoring the %exception code and
+            the exception specification of the base class member, for example:
+
+              %exception Base::get {...}
+              struct Base {
+                int get();
+              };
+              struct Derived : Base {
+              };
+
+            An exception thrown by Base::get() was caught when calling Base_get() but not when calling
+            Derived_get(), so it terminated the program. Derived_get() now uses the %exception code, the
+            exception specification, %catches and the other features of the base class member, as
+            Base_get() does.
+
+2026-10-19: wsfulton
+            [C] Fix the wrapper not compiling when wrapping C code for a function with an array
+            parameter, such as:
+
+              short sum_array(short x[5]);
+
+            The wrapper declared the parameter as 'short [5] arg1' instead of 'short arg1[5]'.
+
+2026-10-18: wsfulton
+            [C] Fix %exception being ignored when wrapping C code, that is without the -c++ option,
+            such as:
+
+              %exception positive_result {
+                $action
+                if (result <= 0)
+                  SWIG_exception(SWIG_ValueError, "positive result expected");
+              }
+
+            The wrapper called the wrapped function without the %exception code. %feature("action")
+            and %contract code were ignored too. They are now used, as they are when wrapping C++ code.
+
+2026-10-18: wsfulton
+            [C] Fix wrappers that did not compile when wrapping C code, such as for:
+
+              int counter;
+              const int get_limit(void);
+
+            The wrapper for a function returning a const type, such as get_limit(), assigned the result
+            to a const variable. With the -namespace option, global variables such as counter are wrapped
+            with accessor functions, which called the variable as if it were a function, as in
+            counter(arg1). The wrappers now compile.
+
 2026-10-18: wsfulton
             [C] The SWIG error codes, such as SWIG_ValueError, are now defined in the generated header, so
             C code can check the error code of a pending exception by name, for example:
@@ -64,6 +139,86 @@ Version 4.6.0 (in progress)
             Before, the variable's getter and setter did not check for the pending exception, so the
             exception was not thrown. Now it is thrown, as it is for %exception code.
 
+2026-10-16: wsfulton
+            Fix %template when a template argument has the same name as a later template parameter.
+            For example, 'Second' is both a type and the name of the second template parameter here:
+
+              struct Second { int value; };
+              template<typename First, typename Second> struct Pair {
+                First first;
+                Second second;
+                Pair *link;
+              };
+              %template(PairSecond) Pair<Second, int>;
+
+            The template was wrapped with the wrong types or the wrappers did not compile. Function
+            templates were affected too.
+
+2026-10-16: wsfulton
+            Fix %template of a class template with a default template argument when a template
+            argument has the same name as a later template parameter. For example, 'Second' is both a
+            type and the name of the second template parameter here:
+
+              struct Second { int value; };
+              template<typename First, typename Second, typename Third = First> class Defaulted {...};
+              %template(DefaultedSecondInt) Defaulted<Second, int>;
+
+            The template was wrapped with the wrong template arguments or the wrappers did not compile.
+
+2026-10-16: wsfulton
+            Fix %contract checks testing the wrong value when a parameter has the same name as a
+            variable in the generated wrapper, such as 'arg1' or 'result':
+
+              %contract f(int x, int arg1, int *result) {
+              require:
+                x > 0;
+              ensure:
+                f > 0;
+              }
+
+            Some of these checks did not compile.
+
+2026-10-16: wsfulton
+            A typemap written with '*' as the size of an array, such as 'char [*]', is now used for a
+            C99 variable length array parameter. Its '$1_dim0' is the size worked out at runtime from
+            the earlier parameter:
+
+              int char_length(int n, const char s[n]);
+
+            The size is used even when the function is first declared without it, as C allows:
+
+              int char_length(int, const char [*]);
+              int char_length(int n, const char s[n]);
+
+            In a multidimensional array, each dimension whose size is only known at runtime is written
+            with '*', as in 'double [*][*]' for 'double m[r][c]'. A dimension with a constant size is
+            written with its size or with ANY, as in 'double [*][ANY]' for 'double m[n][3]'. '$1_dim1'
+            and so on are the sizes of the other dimensions and '$1_size' is all the sizes multiplied
+            together.
+
+            A typemap written with '*' is used before any typemap for an array of unknown size, even
+            when the '*' typemap only matches once a qualifier is removed or a typedef is resolved. So
+            'int [*]' is used rather than 'const int []' for 'const int a[n]'. The default typemaps are
+            looked for in the same order, 'SWIGTYPE [*]' before 'SWIGTYPE []'.
+
+            In a multi-argument typemap, an array written with '*', or with a size that refers to an
+            earlier parameter of the typemap, only matches a variable length array parameter. Its
+            '$2_dim0' and so on are the sizes of that array:
+
+              %typemap(in) (int n, double values[n]) {...}
+              double sum(int n, double values[n]);
+
+            Such typemaps are provided for a char array in every target language except C, which passes
+            the array on unchanged. In R, they are also provided for an array of numbers, enums or
+            strings. They copy the string or vector into an array of that size, as for a fixed size
+            array, instead of passing it without checking its length. A string or vector too long for
+            the array is now an error.
+
+            The size is only known once the arguments are converted. So it can only be used in the
+            'check', 'argout' and 'freearg' typemaps and in an 'in' typemap without numinputs=0. Using
+            it in any other typemap, such as a 'typecheck' or target language typemap, or in a
+            typemap's local variables or attributes is an error.
+
 2026-10-16: vadz
             [Python] Fix "metaclass conflict" TypeError when importing a module with a class using
             the nondynamic feature that derives from a nondynamic class from another module.
@@ -75,6 +230,19 @@ Version 4.6.0 (in progress)
 2026-10-16: vadz
             [Python] Setting a property of a class using the nondynamic feature no longer calls its
             getter, so it works even when the getter throws, e.g. because the value is not set yet.
+
+2026-10-15: wsfulton
+            A C99 variable length array parameter, which has a size that refers to an earlier
+            parameter, is now wrapped as an array of unknown size, such as 'char []'. It was wrapped
+            as a fixed size array, such as 'char [ANY]'. The wrappers did not compile for some types,
+            such as these:
+
+              int char_length(int n, const char s[n]);
+              double trace(int n, double m[n][n]);
+
+            Typemaps for a fixed size array are no longer used for such a parameter.
+
+            *** POTENTIAL INCOMPATIBILITY ***
 
 2026-10-15: wsfulton
             Fix a template argument containing a '.', such as a floating point literal, a member
@@ -150,6 +318,24 @@ Version 4.6.0 (in progress)
               %template(make_5) make<5>;
 
             instantiated the first make as '5 make()', which did not compile.
+
+2026-10-14: wsfulton
+            Add support for 'static', type qualifiers and '*' in the brackets of a function
+            parameter's array, as allowed by C99, which were a syntax error.  They do not change
+            the function's type, so they are ignored and the parameter is wrapped as if they were
+            not there:
+
+              double average(const double values[static 3]);
+              void clear(int buffer[const 10]);
+              int total(size_t, const int [*]);
+
+            They are reported as an error for a global variable, structure member or typedef.
+
+2026-10-14: wsfulton
+            [R] Fix the wrapper for a function pointer type with an array parameter, which did
+            not compile:
+
+              typedef int (*summer)(const int a[3]);
 
 2026-10-14: wsfulton
             [C, C#, D, Go, Guile, Java, Lua, PHP] An exception caught by the catch all handler that

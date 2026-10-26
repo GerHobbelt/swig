@@ -466,6 +466,7 @@ CPP_TEST_CASES += \
 	symbol_clash \
 	sym \
 	template_advanced_rename \
+	template_arg_names \
 	template_arg_replace \
 	template_arg_scope \
 	template_arg_typename \
@@ -908,6 +909,8 @@ C_TEST_CASES += \
 	c_delete \
 	c_delete_function \
 	c_this_identifier \
+	c99_parameter_array_declarators \
+	c99_vla_typemaps \
 	char_constant \
 	charptr_fragment \
 	command_line_define \

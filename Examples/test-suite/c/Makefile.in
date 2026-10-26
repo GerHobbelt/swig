@@ -17,14 +17,16 @@ CPP_TEST_CASES := \
 
 CPP11_TEST_CASES := \
 
+C_TEST_CASES := \
+    c_namespace_globals \
+
 # The following tests are currently broken and need to be fixed.
 FAILING_C_TESTS := \
     arrays \
-    arrays_dimension_expression \
+    c99_parameter_array_declarators \
+    c99_vla_typemaps \
     funcptr \
     function_typedef \
-    lextype \
-    li_carrays \
     nested \
     nested_extend_c \
     nested_structs \
@@ -44,13 +46,11 @@ FAILING_CPP_TESTS := \
     cpp_enum \
     constant_pointers \
     director_char_array \
-    director_unwrap \
     director_unwrap_result \
     enum_thorough \
     extend \
     extend_default \
     extern_c \
-    extern_template_method \
     funcptr_cpp \
     global_scope_types \
     grouping \
@@ -112,6 +112,9 @@ SWIGOPT += -Werror
 SWIGOPT += -w524 -w761
 
 %.ctest: SWIGOPT += -nocxx
+
+# When wrapping C code, global variables are only wrapped with accessor functions with -namespace.
+c_namespace_globals.ctest: SWIGOPT += -namespace ns
 
 # Tests for which C++ wrappers currently don't compile.
 contract.cpptest: SWIG_NOCXX = -nocxx # Class derived from a base class with multiple base classes and hence ignored.

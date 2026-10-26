@@ -485,3 +485,39 @@ void ParmList_replace_names_positional(String *s, ParmList *p, Parm *end) {
     }
   }
 }
+
+/* -----------------------------------------------------------------------------
+ * ParmList_replace_positional()
+ *
+ * The reverse of ParmList_replace_names_positional(): replace each $ variable in 's' with the 'attribute' of the
+ * parameter in 'p' at that position, $1 for the first parameter, $2 for the second and so on, such as '$1 * 2' into
+ * 'arg1 * 2' for the "lname" attribute.  A $ variable for a parameter without the attribute is left alone.
+ * ----------------------------------------------------------------------------- */
+
+void ParmList_replace_positional(String *s, ParmList *p, const_String_or_char_ptr attribute) {
+  int position = 0;
+  for (; p; p = nextSibling(p)) {
+    String *value = Getattr(p, attribute);
+    String *dollar = NewStringf("$%d", ++position);
+    if (value) {
+      Replace(s, dollar, value, DOH_REPLACE_NUMBER_END);
+    }
+    Delete(dollar);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * ParmList_find_name_in()
+ *
+ * Return the first parameter in 'p' whose name occurs as an identifier in 's', such as the 'int n' of the C99 variable
+ * length array size 'n * 2'.  Only the parameters before 'end' are searched, or all of them when 'end' is 0.  NULL if
+ * there is none.
+ * ----------------------------------------------------------------------------- */
+
+Parm *ParmList_find_name_in(ParmList *p, Parm *end, const String *s) {
+  for (; p && p != end; p = nextSibling(p)) {
+    if (Swig_contains_identifier(s, Getattr(p, "name")))
+      return p;
+  }
+  return 0;
+}

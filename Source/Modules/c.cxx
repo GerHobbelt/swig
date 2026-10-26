@@ -2164,7 +2164,6 @@ public:
     maybe_owned_dohptr wname = getFunctionWrapperName(n, name);
     SwigType *type = Getattr(n, "type");
     SwigType *return_type = NULL;
-    String *arg_names = NULL;
     ParmList *parms = Getattr(n, "parms");
     Parm *p;
     String *proto = NewString("");
@@ -2174,26 +2173,32 @@ public:
     // create new function wrapper object
     Wrapper *wrapper = NewWrapper();
 
-    // create new wrapper name
-    Setattr(n, "wrap:name", wname);  // Necessary to set this attribute? Apparently, it's never read!
+    // create new wrapper name, which emit_action() requires
+    Setattr(n, "wrap:name", wname);
 
-    // create function call
-    arg_names = Swig_cfunction_call(empty_string, parms);
-    if (arg_names) {
-      Delitem(arg_names, 0);
-      Delitem(arg_names, DOH_END);
+    // make sure lnames are set, as they are not for the parameter of a variable setter
+    int index = 1;
+    for (p = parms; p; (p = nextSibling(p)), index++) {
+      if (!Getattr(p, "lname")) {
+        String *lname = NewStringf("arg%d", index);
+        Setattr(p, "lname", lname);
+        Delete(lname);
+      }
     }
     return_type = SwigType_str(type, 0);
 
     // emit wrapper prototype and code
     for (p = parms, gencomma = 0; p; p = nextSibling(p)) {
-      Printv(proto, gencomma ? ", " : "", SwigType_str(Getattr(p, "type"), 0), " ", Getattr(p, "lname"), NIL);
+      Printv(proto, gencomma ? ", " : "", SwigType_str(Getattr(p, "type"), Getattr(p, "lname")), NIL);
       gencomma = 1;
     }
     Printv(wrapper->def, return_type, " ", wname.get(), "(", proto, ") {\n", NIL);
 
+    // the result variable is assigned to, so it does not have the qualifiers of a const return type
     if (!is_void_return) {
-      Printv(wrapper->code, return_type, " result;\n", NIL);
+      SwigType *ltype = SwigType_ltype(type);
+      Printv(wrapper->code, scoped_dohptr(SwigType_str(ltype, 0)).get(), " result;\n", NIL);
+      Delete(ltype);
     }
 
     // attach 'check' typemaps
@@ -2213,11 +2218,18 @@ public:
       }
     }
 
+    // the action of a variable setter is the memberin or globalin typemap
+    if (Getattr(n, "memberset"))
+      canThrow(n, "memberin", n);
+    else if (Getattr(n, "varset"))
+      canThrow(n, "globalin", n);
+
+    // %exception
+    if (Getattr(n, "feature:except:canthrow"))
+      Setattr(n, "c:canthrow", "1");
+
     Append(wrapper->code, prepend_feature(n));
-    if (!is_void_return) {
-      Printf(wrapper->code, "result = ");
-    }
-    Printv(wrapper->code, Getattr(n, "name"), "(", arg_names, ");\n", NIL);
+    Append(wrapper->code, scoped_dohptr(emit_action(n)).get());
     Append(wrapper->code, append_feature(n));
     if (!is_void_return)
       Printf(wrapper->code, "return result;\n");
@@ -2234,6 +2246,9 @@ public:
       emit_fail_label(n, wrapper, empty_string, is_void_return ? NULL : "0");
     }
     Delete(resolved_type);
+
+    emit_isvoid_special_variables(n, wrapper->code, is_void_return);
+
     Printf(wrapper->code, "}");
 
     Wrapper_print(wrapper, sect_wrappers);
@@ -2242,7 +2257,6 @@ public:
 
     // cleanup
     Delete(proto);
-    Delete(arg_names);
     Delete(return_type);
     DelWrapper(wrapper);
   }
@@ -2491,7 +2505,7 @@ public:
 
     // look for the throws typemaps used for the exception specification and the canthrow attribute
     if (ParmList *throw_parm_list = Getattr(n, "catchlist")) {
-      Swig_typemap_attach_parms("throws", throw_parm_list, wrapper);
+      Swig_typemap_attach_parms("throws", throw_parm_list, 0);
       for (p = throw_parm_list; p; p = nextSibling(p)) {
         if (Getattr(p, "tmap:throws"))
           canThrow(n, "throws", p);
@@ -2642,8 +2656,15 @@ public:
     Setattr(new_node, "parms", Copy(Getattr(node, "parms")));
     Setattr(new_node, "type", Copy(Getattr(node, "type")));
     Setattr(new_node, "decl", Copy(Getattr(node, "decl")));
-    if (GetFlag(node, "feature:immutable"))
-      SetFlag(new_node, "feature:immutable");
+    // use the features, such as %exception, and the exception specification of the base class member
+    for (Iterator ki = First(node); ki.key; ki = Next(ki)) {
+      if (Strncmp(ki.key, "feature:", 8) == 0)
+        Setattr(new_node, ki.key, Copy(ki.item));
+    }
+    if (ParmList *throws = Getattr(node, "throws"))
+      Setattr(new_node, "throws", CopyParmList(throws));
+    if (ParmList *catchlist = Getattr(node, "catchlist"))
+      Setattr(new_node, "catchlist", CopyParmList(catchlist));
 
     Node *const parent = parentNode(node);
     Setattr(new_node, "c:inherited_from", Getattr(parent, "name"));
