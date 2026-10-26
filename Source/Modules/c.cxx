@@ -1,6 +1,10 @@
 /* -----------------------------------------------------------------------------
- * See the LICENSE file for information on copyright, usage and redistribution
- * of SWIG, and the README file for authors - http://www.swig.org/release.html.
+ * This file is part of SWIG, which is licensed as a whole under version 3
+ * (or any later version) of the GNU General Public License. Some additional
+ * terms also apply to certain portions of SWIG. The full details of the SWIG
+ * license and copyrights can be found in the LICENSE and COPYRIGHT files
+ * included with the SWIG source code as distributed by the SWIG developers
+ * and at https://www.swig.org/legal.html.
  *
  * c.cxx
  *
@@ -1516,22 +1520,28 @@ public:
     Delete(ns_prefix);
   }
 
+  // Return true if the sym:name of the node is used as the name of its wrapper function without adding a prefix.
+  //
+  // The basic idea here is that for class members we don't need to use any prefix at all, as they're already prefixed by the class name, which has the
+  // appropriate prefix, but we need to use a prefix for the other symbols.
+  //
+  // However there are a couple of special cases complicating this:
+  //
+  //  - Friend functions are declared inside the class, but are not member functions, so we have to check for both the current class and "ismember" property.
+  //  - Destructors and implicitly generated constructors don't have "ismember" for some reason, so we need to check for them specifically.
+  //  - Variable getters and setters don't need to use the prefix as they don't clash with anything.
+  bool isSymNameWrapperName(Node *n) const {
+    return (getCurrentClass() && (Checkattr(n, "ismember", "1") || Checkattr(n, "nodeType", "constructor") || Checkattr(n, "nodeType", "destructor"))) ||
+           Checkattr(n, "varget", "1") || Checkattr(n, "varset", "1");
+  }
+
   // Construct the name to be used for a function with the given name in C wrappers.
   //
   // The returned string must be freed by caller.
   maybe_owned_dohptr getFunctionWrapperName(Node *n, String *name) const {
     maybe_owned_dohptr wname;
 
-    // The basic idea here is that for class members we don't need to use any prefix at all, as they're already prefixed by the class name, which has the
-    // appropriate prefix, but we need to use a prefix for the other symbols.
-    //
-    // However there are a couple of special cases complicating this:
-    //
-    //  - Friend functions are declared inside the class, but are not member functions, so we have to check for both the current class and "ismember" property.
-    //  - Destructors and implicitly generated constructors don't have "ismember" for some reason, so we need to check for them specifically.
-    //  - Variable getters and setters don't need to use the prefix as they don't clash with anything.
-    if ((getCurrentClass() && (Checkattr(n, "ismember", "1") || Checkattr(n, "nodeType", "constructor") || Checkattr(n, "nodeType", "destructor"))) ||
-        -Checkattr(n, "varget", "1") || Checkattr(n, "varset", "1")) {
+    if (isSymNameWrapperName(n)) {
       wname.assign_non_owned(name);
       return wname;
     }
@@ -1553,6 +1563,23 @@ public:
 
     wname.assign_owned(NewStringf("%s_%s", prefix, name));
     return wname;
+  }
+
+  // Return the sym:name of the node as the other target languages have it, for the $symname special variable.
+  //
+  // The -namespace option puts its prefix in the sym:name of the nodes that use it as their wrapper name. The naming
+  // formats registered in main() do so for a class member, constructor or destructor, such as 'ns_Klass_method'.
+  // globalvariableHandler() does so for a global variable, giving 'ns_gvar_get' for its getter. So remove the prefix.
+  //
+  // The returned string must be freed by caller.
+  String *getSymName(Node *n) const {
+    String *const symname = Getattr(n, "sym:name");
+    if (ns_prefix && isSymNameWrapperName(n)) {
+      int const prefix_len = Len(ns_prefix);
+      if (Strncmp(symname, ns_prefix, prefix_len) == 0 && Char(symname)[prefix_len] == '_')
+        return NewString(Char(symname) + prefix_len + 1);
+    }
+    return Copy(symname);
   }
 
   /* -----------------------------------------------------------------------------
@@ -1611,9 +1638,11 @@ public:
 
   /* -----------------------------------------------------------------------------
    * substituteResolvedTypeSpecialVariable()
+   *
+   * Return true if tm is replaced with the declaration of the parameter parm_name.
    * ----------------------------------------------------------------------------- */
 
-  void substituteResolvedTypeSpecialVariable(SwigType *classnametype, String *tm, const char *classnamespecialvariable) {
+  bool substituteResolvedTypeSpecialVariable(SwigType *classnametype, String *tm, const char *classnamespecialvariable, String *parm_name) {
     scoped_dohptr btype(SwigType_base(classnametype));
     if (SwigType_isenum(btype)) {
       Node *const enum_node = enumLookup(btype);
@@ -1637,11 +1666,11 @@ public:
     } else {
       if (!CPlusPlus) {
         // Just use the original C type when not using C++, we know that this type can be used in the wrappers.
+        String *const s = SwigType_lstr(classnametype, parm_name);
         Clear(tm);
-        String *const s = SwigType_str(classnametype, 0);
         Append(tm, s);
         Delete(s);
-        return;
+        return parm_name != NULL;
       }
 
       String *typestr = NIL;
@@ -1667,6 +1696,7 @@ public:
       Replaceall(tm, classnamespecialvariable, typestr);
       Delete(typestr);
     }
+    return false;
   }
 
   /* -----------------------------------------------------------------------------
@@ -1679,36 +1709,43 @@ public:
    * Inputs:
    *   pt - parameter type
    *   tm - typemap contents that might contain the special variable to be replaced
+   *   parm_name - name of the parameter of type pt, if any
    * Outputs:
    *   tm - typemap contents complete with the special variable substitution
+   * Returns true if tm is the declaration of parm_name rather than just its type.
    * ----------------------------------------------------------------------------- */
 
-  void substituteResolvedType(SwigType *pt, String *tm) {
+  bool substituteResolvedType(SwigType *pt, String *tm, String *parm_name = NULL) {
     SwigType *type = SwigType_typedef_resolve_all(pt);
     SwigType *strippedtype = SwigType_strip_qualifiers(type);
+    bool is_parm_decl = false;
 
     if (Strstr(tm, "$resolved_type")) {
       SwigType *classnametype = Copy(strippedtype);
-      substituteResolvedTypeSpecialVariable(classnametype, tm, "$resolved_type");
+      if (substituteResolvedTypeSpecialVariable(classnametype, tm, "$resolved_type", parm_name))
+        is_parm_decl = true;
       Delete(classnametype);
     }
     if (Strstr(tm, "$*resolved_type")) {
       SwigType *classnametype = Copy(strippedtype);
       Delete(SwigType_pop(classnametype));
       if (Len(classnametype) > 0) {
-        substituteResolvedTypeSpecialVariable(classnametype, tm, "$*resolved_type");
+        if (substituteResolvedTypeSpecialVariable(classnametype, tm, "$*resolved_type", parm_name))
+          is_parm_decl = true;
       }
       Delete(classnametype);
     }
     if (Strstr(tm, "$&resolved_type")) {
       SwigType *classnametype = Copy(strippedtype);
       SwigType_add_pointer(classnametype);
-      substituteResolvedTypeSpecialVariable(classnametype, tm, "$&resolved_type");
+      if (substituteResolvedTypeSpecialVariable(classnametype, tm, "$&resolved_type", parm_name))
+        is_parm_decl = true;
       Delete(classnametype);
     }
 
     Delete(strippedtype);
     Delete(type);
+    return is_parm_decl;
   }
 
   /*----------------------------------------------------------------------
@@ -2176,6 +2213,12 @@ public:
     // create new wrapper name, which emit_action() requires
     Setattr(n, "wrap:name", wname);
 
+    // $symname in the typemaps and the %exception code expands to sym:name, so use the other target languages' one
+    Swig_save("functionWrapperCSpecific", n, "sym:name", NIL);
+    String *symname = getSymName(n);
+    Setattr(n, "sym:name", symname);
+    Delete(symname);
+
     // make sure lnames are set, as they are not for the parameter of a variable setter
     int index = 1;
     for (p = parms; p; (p = nextSibling(p)), index++) {
@@ -2189,16 +2232,22 @@ public:
 
     // emit wrapper prototype and code
     for (p = parms, gencomma = 0; p; p = nextSibling(p)) {
-      Printv(proto, gencomma ? ", " : "", SwigType_str(Getattr(p, "type"), Getattr(p, "lname")), NIL);
+      scoped_dohptr parm_type(SwigType_decay_array(Getattr(p, "type")));
+      String *parm_decl = SwigType_str(parm_type, Getattr(p, "lname"));
+      Printv(proto, gencomma ? ", " : "", parm_decl, NIL);
+      Delete(parm_decl);
       gencomma = 1;
     }
-    Printv(wrapper->def, return_type, " ", wname.get(), "(", proto, ") {\n", NIL);
+
+    // the name goes inside the declaration, as for a function returning a pointer to an array, which is what the getter
+    // of an array variable returns, as in 'int (*name(void))[3]'
+    scoped_dohptr def_type(SwigType_decay_array(type));
+    scoped_dohptr decl(NewStringf("%s(%s)", wname.get(), proto));
+    Printv(wrapper->def, scoped_dohptr(SwigType_str(def_type, decl)).get(), " {\n", NIL);
 
     // the result variable is assigned to, so it does not have the qualifiers of a const return type
     if (!is_void_return) {
-      SwigType *ltype = SwigType_ltype(type);
-      Printv(wrapper->code, scoped_dohptr(SwigType_str(ltype, 0)).get(), " result;\n", NIL);
-      Delete(ltype);
+      Printv(wrapper->code, scoped_dohptr(SwigType_lstr(type, "result")).get(), ";\n", NIL);
     }
 
     // attach 'check' typemaps
@@ -2248,10 +2297,12 @@ public:
     Delete(resolved_type);
 
     emit_isvoid_special_variables(n, wrapper->code, is_void_return);
+    Replaceall(wrapper->code, "$symname", Getattr(n, "sym:name"));
 
     Printf(wrapper->code, "}");
 
     Wrapper_print(wrapper, sect_wrappers);
+    Swig_restore(n);
 
     emit_wrapper_func_decl(n, wname);
 
@@ -2342,16 +2393,17 @@ public:
       String *lname = Getattr(p, "lname");
       String *c_parm_type = 0;
       String *arg_name = NewString("");
+      bool is_parm_decl = false;
 
       Printf(arg_name, "c%s", lname);
 
       if ((tm = Getattr(p, "tmap:ctype"))) {  // set the appropriate type for parameter
         c_parm_type = Copy(tm);
-        substituteResolvedType(type, c_parm_type);
+        is_parm_decl = substituteResolvedType(type, c_parm_type, arg_name);
 
         // We prefer to keep typedefs in the wrapper functions signatures as it makes them more readable, but we can't do it for nested typedefs as
         // they're not valid in C, so resolve them in this case.
-        if (strstr(Char(c_parm_type), "::")) {
+        if (!is_parm_decl && strstr(Char(c_parm_type), "::")) {
           SwigType *const tdtype = SwigType_typedef_resolve_all(c_parm_type);
           Delete(c_parm_type);
           c_parm_type = tdtype;
@@ -2363,7 +2415,11 @@ public:
         Swig_warning(WARN_C_TYPEMAP_CTYPE_UNDEF, input_file, line_number, "No ctype typemap defined for %s\n", SwigType_str(type, 0));
       }
 
-      Printv(proto, gencomma ? ", " : "", c_parm_type, " ", arg_name, NIL);
+      if (is_parm_decl) {
+        Printv(proto, gencomma ? ", " : "", c_parm_type, NIL);
+      } else {
+        Printv(proto, gencomma ? ", " : "", c_parm_type, " ", arg_name, NIL);
+      }
       gencomma = 1;
 
       // apply typemaps for input parameter
@@ -2467,13 +2523,19 @@ public:
     // create new wrapper name
     Setattr(n, "wrap:name", wname);
 
+    // $symname in the typemaps and the %exception code expands to sym:name, so use the other target languages' one
+    Swig_save("functionWrapperCPPSpecific", n, "sym:name", NIL);
+    String *symname = getSymName(n);
+    Setattr(n, "sym:name", symname);
+    Delete(symname);
+
     // add variable for holding result of original function 'cppresult'
     if (!is_void_return) {
       SwigType *value_type = cplus_value_type(type);
       SwigType *cppresult_type = value_type ? value_type : type;
-      SwigType *ltype = SwigType_ltype(cppresult_type);
-      Wrapper_add_local(wrapper, "cppresult", SwigType_str(ltype, "cppresult"));
-      Delete(ltype);
+      String *cppresult_decl = SwigType_lstr(cppresult_type, "cppresult");
+      Wrapper_add_local(wrapper, "cppresult", cppresult_decl);
+      Delete(cppresult_decl);
       Delete(value_type);
     }
 
@@ -2569,6 +2631,28 @@ public:
       Append(wrapper->code, action);
     }
 
+    // insert argument output code
+    for (p = parms; p;) {
+      String *tm;
+      if ((tm = Getattr(p, "tmap:argout"))) {
+        if (Len(tm) != 0) {
+          canThrow(n, "argout", p);
+          if (is_void_return && Strstr(tm, "$result")) {
+            String *pname = Getattr(p, "name") ? Getattr(p, "name") : Getattr(p, "lname");
+            Swig_error(Getfile(n), Getline(n), "The 'argout' typemap of parameter '%s' uses $result, but '%s' returns void.\n", pname, name);
+          }
+          String *input = NewStringf("c%s", Getattr(p, "lname"));
+          Replaceall(tm, "$input", input);
+          Replaceall(tm, "$result", "result");
+          Delete(input);
+          Printv(wrapper->code, tm, "\n", NIL);
+        }
+        p = Getattr(p, "tmap:argout:next");
+      } else {
+        p = nextSibling(p);
+      }
+    }
+
     // insert cleanup code, which is run after an error too, so the canthrow attribute is not used for a freearg typemap, which cannot use SWIG_fail
     scoped_dohptr cleanup(NewStringEmpty());
     for (p = parms; p;) {
@@ -2593,10 +2677,12 @@ public:
     emit_fail_label(n, wrapper, cleanup, is_void_return ? NULL : "0");
 
     emit_isvoid_special_variables(n, wrapper->code, is_void_return);
+    Replaceall(wrapper->code, "$symname", Getattr(n, "sym:name"));
 
     Append(wrapper->code, "}\n");
 
     Wrapper_print(wrapper, sect_wrappers);
+    Swig_restore(n);
 
     // cleanup
     DelWrapper(wrapper);
