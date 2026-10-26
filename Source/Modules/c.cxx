@@ -1639,7 +1639,8 @@ public:
   /* -----------------------------------------------------------------------------
    * substituteResolvedTypeSpecialVariable()
    *
-   * Return true if tm is replaced with the declaration of the parameter parm_name.
+   * Return true if tm is replaced with the declaration of parm_name, the name of a parameter or the name and parameters
+   * of a function.
    * ----------------------------------------------------------------------------- */
 
   bool substituteResolvedTypeSpecialVariable(SwigType *classnametype, String *tm, const char *classnamespecialvariable, String *parm_name) {
@@ -1664,8 +1665,10 @@ public:
 
       Replaceall(tm, classnamespecialvariable, c_enumname);
     } else {
-      if (!CPlusPlus) {
-        // Just use the original C type when not using C++, we know that this type can be used in the wrappers.
+      // Just use the original C type when not using C++, we know that this type can be used in the wrappers. The type of a
+      // function pointer cannot be followed by a '*' or a name, so it is declared in this way in the header file for C++ too.
+      if (!CPlusPlus ||
+          (current_output == output_wrapper_decl && Strcmp(classnamespecialvariable, "$resolved_type") == 0 && SwigType_isfunctionpointer(classnametype))) {
         String *const s = SwigType_lstr(classnametype, parm_name);
         Clear(tm);
         Append(tm, s);
@@ -1709,7 +1712,7 @@ public:
    * Inputs:
    *   pt - parameter type
    *   tm - typemap contents that might contain the special variable to be replaced
-   *   parm_name - name of the parameter of type pt, if any
+   *   parm_name - name of the parameter of type pt, or name and parameters of the function returning pt, if any
    * Outputs:
    *   tm - typemap contents complete with the special variable substitution
    * Returns true if tm is the declaration of parm_name rather than just its type.
@@ -2170,7 +2173,10 @@ public:
       Replaceall(prefix, "q(", "");
       Replaceall(prefix, ")", "");
       Replaceall(prefix, " ", "");
-      Printf(result, "%s", prefix);
+      // an array size can be an expression, such as 'N+1' or 'sizeof("abc")', so mangle what is left of it
+      String *mangled_prefix = Swig_name_mangle_string(prefix);
+      Printf(result, "%s", mangled_prefix);
+      Delete(mangled_prefix);
     }
 
     type = SwigType_base(type);
@@ -2325,18 +2331,27 @@ public:
     Delete(over_suffix);
   }
 
-  scoped_dohptr get_wrapper_func_return_type(Node *n) {
+  /* ----------------------------------------------------------------------
+   * get_wrapper_func_return_type()
+   *
+   * Return the type returned by the wrapper of the function n, or the declaration of decl with this return type if decl,
+   * the name and parameters of the wrapper, is given, as in 'int (*name(void))(int,int)' for a function pointer.
+   * ---------------------------------------------------------------------- */
+  scoped_dohptr get_wrapper_func_return_type(Node *n, String *decl = NULL) {
     SwigType *type = Getattr(n, "type");
     String *return_type;
 
     if ((return_type = Swig_typemap_lookup("ctype", n, "", 0))) {
-      substituteResolvedType(type, return_type);
+      if (substituteResolvedType(type, return_type, decl))
+        decl = NULL;
     } else {
       Swig_warning(WARN_C_TYPEMAP_CTYPE_UNDEF, input_file, line_number, "No ctype typemap defined for %s\n", SwigType_str(type, 0));
       return_type = NewString("");
     }
 
     Replaceall(return_type, "::", "_");
+    if (decl)
+      Printv(return_type, " ", decl, NIL);
 
     return scoped_dohptr(return_type);
   }
@@ -2355,26 +2370,31 @@ public:
     String *proto = NewString("(");
     int gencomma = 0;
 
-    // attach the standard typemaps
+    // attach the standard typemaps, except when wrapping C, as the 'in' typemaps are then not used
     if (wrapper) {
-      emit_attach_parmmaps(parms, wrapper);
-    } else {
-      // We can't call emit_attach_parmmaps() without a wrapper, it would just crash.
+      emit_attach_parm_typemaps(parms, wrapper);
+    } else if (CPlusPlus) {
       // Attach "in" manually, we need it for tmap:in:numinputs below.
       Swig_typemap_attach_parms("in", parms, 0);
     }
     Setattr(n, "wrap:parms", parms);  // never read again?!
 
-    // attach 'ctype' typemaps
-    Swig_typemap_attach_parms("ctype", parms, 0);
+    // attach 'ctype' typemaps, except when wrapping C, as the wrapper then has the parameters of the function, see
+    // functionWrapperCSpecific(), so the 'ctype' typemap of each parameter is looked up on its own below instead
+    if (CPlusPlus)
+      Swig_typemap_attach_parms("ctype", parms, 0);
 
     // prepare function definition
     for (p = parms, gencomma = 0; p;) {
       String *tm;
       SwigType *type = NULL;
 
-      while (p && checkAttribute(p, "tmap:in:numinputs", "0")) {
-        p = Getattr(p, "tmap:in:next");
+      if (wrapper) {
+        p = emit_ignored_in_typemaps(p, wrapper->code);
+      } else if (CPlusPlus) {
+        while (p && checkAttribute(p, "tmap:in:numinputs", "0")) {
+          p = Getattr(p, "tmap:in:next");
+        }
       }
       if (!p)
         break;
@@ -2397,7 +2417,14 @@ public:
 
       Printf(arg_name, "c%s", lname);
 
-      if ((tm = Getattr(p, "tmap:ctype"))) {  // set the appropriate type for parameter
+      scoped_dohptr parm_ctype;
+      if (CPlusPlus) {
+        tm = Getattr(p, "tmap:ctype");
+      } else {
+        parm_ctype = Swig_typemap_lookup("ctype", p, "", 0);
+        tm = parm_ctype.get();
+      }
+      if (tm) {  // set the appropriate type for parameter
         c_parm_type = Copy(tm);
         is_parm_decl = substituteResolvedType(type, c_parm_type, arg_name);
 
@@ -2422,8 +2449,10 @@ public:
       }
       gencomma = 1;
 
-      // apply typemaps for input parameter
-      if ((tm = Getattr(p, "tmap:in"))) {
+      // apply typemaps for input parameter, except when wrapping C
+      if (!CPlusPlus) {
+        p = nextSibling(p);
+      } else if ((tm = Getattr(p, "tmap:in"))) {
         Replaceall(tm, "$input", arg_name);
         if (wrapper) {
           canThrow(n, "in", p);
@@ -2454,7 +2483,8 @@ public:
     current_output = output_wrapper_decl;
 
     // add function declaration to the proxy header file
-    Printv(sect_wrappers_decl, "SWIGIMPORT ", get_wrapper_func_return_type(n).get(), " ", wname, get_wrapper_func_proto(n).get(), ";\n\n", NIL);
+    scoped_dohptr decl(NewStringf("%s%s", wname, get_wrapper_func_proto(n).get()));
+    Printv(sect_wrappers_decl, "SWIGIMPORT ", get_wrapper_func_return_type(n, decl).get(), ";\n\n", NIL);
   }
 
   void functionWrapperCPPSpecific(Node *n) {
@@ -2777,20 +2807,52 @@ public:
   }
 
   /* ---------------------------------------------------------------------
+   * resolve_undeclared_typedefs()
+   *
+   * Return a copy of type with each typedef that the header file does not declare replaced by the type it stands for,
+   * such as 'int *' for 'Integer' after 'typedef int *Integer'. The header file declares a wrapped struct or enum that is
+   * declared with a typedef by its typedef name, as in 'typedef struct {...} Foo', so the base type is resolved until it
+   * is such a name or it is not a typedef.
+   * --------------------------------------------------------------------- */
+  SwigType *resolve_undeclared_typedefs(SwigType *type) {
+    SwigType *resolved = Copy(type);
+    for (;;) {
+      scoped_dohptr base(SwigType_base(resolved));
+      if (Node *enum_node = enumLookup(base)) {
+        if (Checkattr(enum_node, "allows_typedef", "1") && Equal(Getattr(enum_node, "sym:name"), base))
+          break;
+      } else if (Node *class_node = classLookup(base)) {
+        String *tdname = Getattr(class_node, "tdname");
+        if (tdname && Equal(tdname, base))
+          break;
+      }
+      SwigType *next = SwigType_typedef_resolve(resolved);
+      if (!next)
+        break;
+      Delete(resolved);
+      resolved = next;
+    }
+    return resolved;
+  }
+
+  /* ---------------------------------------------------------------------
    * make_c_var_decl()
    *
    * Return the C declaration for the given node of "variable" kind.
    *
    * If the variable has a type not representable in C, returns NULL, the caller must check for this!
    *
-   * This function accounts for two special cases:
+   * This function accounts for three special cases:
    *  1. If the type is an anonymous enum, "int" is used instead.
    *  2. If the type is an array, its bounds are stripped.
+   *  3. A typedef that the header file does not declare is resolved, see resolve_undeclared_typedefs().
    * --------------------------------------------------------------------- */
   String *make_c_var_decl(Node *n) {
     String *name = Getattr(n, "name");
     SwigType *type = Getattr(n, "type");
     String *type_str = SwigType_str(type, 0);
+    // the type declared, which SwigType_str() gives with the name inside the declaration, as for a function pointer
+    SwigType *decl_type = Copy(type);
 
     if (Getattr(n, "unnamedinstance")) {
       // If this is an anonymous enum, we can declare the variable as int even though we can't reference this type.
@@ -2807,15 +2869,15 @@ public:
         return SWIG_ERROR;
       }
 
-      String *const int_type_str = NewStringf("int%s", unnamed_end + 1);
-      Delete(type_str);
-      type_str = int_type_str;
+      Delete(decl_type);
+      decl_type = SwigType_prefix(type);
+      Append(decl_type, "int");
     } else {
       scoped_dohptr btype(SwigType_base(type));
       if (SwigType_isenum(btype)) {
         // Enums are special as they can be unknown, i.e. not wrapped by SWIG. In this case we just use int instead.
         if (!enumLookup(btype)) {
-          Replaceall(type_str, btype, "int");
+          Replaceall(decl_type, btype, "int");
         }
       } else {
         // Don't bother with checking if type is representable in C if we're wrapping C and not C++ anyhow: of course it is.
@@ -2831,19 +2893,18 @@ public:
             Printv(sect_wrappers_types, "#include <stdbool.h>\n\n", NIL);
           }
         }
+        Delete(decl_type);
+        decl_type = resolve_undeclared_typedefs(type);
       }
     }
 
-    String *const var_decl = NewStringEmpty();
-    if (SwigType_isarray(type)) {
-      String *dims = Strchr(type_str, '[');
-      char *c = Char(type_str);
-      c[Len(type_str) - Len(dims) - 1] = '\0';
-      Printv(var_decl, c, " ", name, "[]", NIL);
-    } else {
-      Printv(var_decl, type_str, " ", name, NIL);
+    if (SwigType_isarray(decl_type)) {
+      Delete(SwigType_pop_arrays(decl_type));
+      SwigType_add_array(decl_type, "");
     }
+    String *const var_decl = SwigType_str(decl_type, name);
 
+    Delete(decl_type);
     Delete(type_str);
 
     return var_decl;

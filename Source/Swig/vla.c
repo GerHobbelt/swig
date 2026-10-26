@@ -25,7 +25,9 @@
  * A typemap written for a variable length array parameter has '*' as the size of each variable dimension, as C99 has
  * for a variable length array of unspecified size in a function prototype, such as 'int [*]' or 'double [*][*][3]'.
  * Such a typemap only matches a variable length array parameter.  Its $1_dim0 and $1_size special variables expand to
- * the runtime size, such as '(arg1)', which only some of the typemaps can use, see Swig_vla_check_size_use().
+ * the runtime size, such as '(arg1)', which only some of the typemaps can use, see Swig_vla_check_size_use().  A
+ * typemap written with the type of the parameter as declared, such as 'int [n]', is looked for first and is used in the
+ * same way.
  * ----------------------------------------------------------------------------- */
 
 #include "swig.h"
@@ -109,23 +111,6 @@ static SwigType *unsized_variable_length_arrays(const SwigType *t, ParmList *par
   return unsized;
 }
 
-/* Replace each name of a parameter in 'parms' before 'end' that 'size', an array size, refers to with the parameter's
-   position, $1 for the first parameter, as ParmList_replace_names_positional() does for a type.  The 'n' in 's.n',
-   'p->n' and 'S::n' is not a parameter, see Swig_replace_expression_identifier(). */
-static void replace_size_names_positional(String *size, ParmList *parms, Parm *end) {
-  int position = 0;
-  Parm *p;
-  for (p = parms; p && p != end; p = nextSibling(p)) {
-    String *name = Getattr(p, "name");
-    position++;
-    if (name) {
-      String *dollar = NewStringf("$%d", position);
-      Swig_replace_expression_identifier(size, name, dollar);
-      Delete(dollar);
-    }
-  }
-}
-
 /* The sizes of the array dimensions of a parameter 'p' in 'parms' of type 'type' that is a C99 variable length array,
    kept as its "vlasize".  There is a size for each of the leading arrays of 'type': the size of a dimension that refers
    to a parameter before 'p', with each such parameter given by its position, or empty for any other dimension.  For
@@ -142,7 +127,7 @@ static String *variable_length_array_sizes(const SwigType *type, ParmList *parms
   for (i = 0; i < Len(elements) && SwigType_isarray(Getitem(elements, i)); i++) {
     String *size = SwigType_parm(Getitem(elements, i));
     if (ParmList_find_name_in(parms, p, size)) {
-      replace_size_names_positional(size, parms, p);
+      ParmList_replace_expression_names_positional(size, parms, p);
       variable = 1;
     } else {
       Clear(size);
@@ -354,6 +339,24 @@ SwigType *Swig_vla_parameter_type(const SwigType *type, Node *node) {
 }
 
 /* -----------------------------------------------------------------------------
+ * Swig_vla_declared_type()
+ *
+ * For a parameter 'node' of type 'type' with the size of a C99 variable length array removed, return a copy of its type
+ * as declared, such as 'a(n).q(const).double' for the 'const double values[n]' of 'int n, const double values[n]'.
+ * This is the type of a typemap written with the size as declared, which is looked for before one written with '*' as
+ * the size.  Return 0 if 'type' is not the type of 'node' or no size was removed from it, or if the type as declared
+ * has '*' as the size of a leading array, as only a parameter whose size is known matches a typemap written with '*'.
+ * ----------------------------------------------------------------------------- */
+
+SwigType *Swig_vla_declared_type(const SwigType *type, Node *node) {
+  SwigType *vlatype = node ? Getattr(node, "vlatype") : 0;
+  SwigType *declared = 0;
+  if (vlatype && Equal(type, Getattr(node, "type")) && !SwigType_isarray_vla(vlatype))
+    declared = Copy(vlatype);
+  return declared;
+}
+
+/* -----------------------------------------------------------------------------
  * Swig_vla_wrapped_type()
  *
  * For 'matchtype', the type of a typemap written with '[*]' that matched a C99 variable length array parameter, as in
@@ -466,7 +469,7 @@ static void report_vla_size_use(Parm *p, Hash *tm, const String *what, const Str
  *   int n, char s[n]
  * It only has a value once the arguments are converted, so only these typemaps written with '[*]' can use it, as
  * $1_dim0 or $1_size for 'index' 1:
- *   %typemap(in) with numinputs other than 0
+ *   %typemap(in), whose code comes after the code converting the earlier arguments even with numinputs=0
  *   %typemap(check)
  *   %typemap(argout)
  *   %typemap(freearg)
@@ -485,26 +488,11 @@ void Swig_vla_check_size_use(const_String_or_char_ptr tmap_method, Hash *tm, Swi
     return;
 
   if (substituted) {
-    if (Equal(tmap_method, "in")) {
-      /* The last numinputs given is the one the wrapper uses, as typemap_attach_kwargs() attaches each in turn */
-      String *numinputs = 0;
-      for (kw = Getattr(tm, "kwargs"); kw; kw = nextSibling(kw)) {
-        if (Equal(Getattr(kw, "name"), "numinputs"))
-          numinputs = Getattr(kw, "value");
-      }
-      allowed = !Equal(numinputs, "0");
-    } else {
-      allowed = Equal(tmap_method, "check") || Equal(tmap_method, "argout") || Equal(tmap_method, "freearg");
-    }
+    allowed = Equal(tmap_method, "in") || Equal(tmap_method, "check") || Equal(tmap_method, "argout") || Equal(tmap_method, "freearg");
   }
 
   if (!allowed && code && uses_vla_size(code, matchtype, index)) {
-    String *what;
-    if (substituted && Equal(tmap_method, "in")) {
-      what = NewString("An 'in' typemap with numinputs=0");
-    } else {
-      what = NewStringf("The '%s' typemap", tmap_method);
-    }
+    String *what = NewStringf("The '%s' typemap", tmap_method);
     report_vla_size_use(p, tm, what, 0);
     Delete(what);
   }

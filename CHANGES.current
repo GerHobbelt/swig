@@ -7,6 +7,130 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-24: wsfulton
+            Fix the 'warning' attribute of a typemap giving the same warning more than once for a
+            parameter or function, such as 3 times in Python and up to 5 times in Go for 'x' here:
+
+              %typemap(in, warning="901:in typemap used") int x "..."
+              int f(int x);
+
+            The warning is now given once for each parameter or function the typemap is used for.
+
+2026-10-24: wsfulton
+            [C] Fix the declaration in the .h file of the wrapper of a C function with an 'in' typemap
+            with numinputs=0, or a multi-argument 'in' or 'ctype' typemap, which left out parameters,
+            such as 'ignored' here or the last parameter of memmove in cdata.i:
+
+              %typemap(in, numinputs=0) int ignored "$1 = 10;"
+              int ignore_first(int ignored, int b);
+
+            The 'in' typemaps are not used when wrapping C, so the wrapper has all the parameters of
+            the function, as its declaration now does too.
+
+2026-10-24: wsfulton
+            [Javascript] Fix the napi engine leaving out some check typemaps for a function with a
+            multi-argument 'in' typemap, such as the check typemap for 'b' here:
+
+              %typemap(in) (const char *s, int len) "..."
+              %typemap(check) int len "..."
+              %typemap(check) int b "..."
+              void f(const char *s, int len, int b);
+
+2026-10-24: wsfulton
+            [R] Fix a crash for a parameter with an 'in' typemap of your own, such as this one, as the
+            freearg typemap for its type freed memory that the 'in' typemap had not allocated:
+
+              %typemap(in, numinputs=0) int *count (int temp) "$1 = &temp;"
+              %typemap(argout) int *count "..."
+              void get_count(int *count);
+
+            For a string or number array parameter, such as 'char *names[3]' or 'int values[n]', the
+            wrapper did not compile instead. The freearg typemaps for 'int *', 'double *' and the other
+            number pointers, 'char *', 'char []' and these arrays are now only used with the 'in'
+            typemap for the same type, as they free what it allocated. If an 'in' typemap of your own
+            allocates memory that one of these typemaps freed, add a freearg typemap to free it.
+
+2026-10-24: wsfulton
+            The code of an 'in' typemap with numinputs=0 now comes in the wrapper in parameter order,
+            after the code converting the earlier arguments. It came before any argument was
+            converted, so it could not use their values, such as the runtime size of a variable
+            length array parameter. An output array sized by an earlier parameter can now be
+            allocated directly:
+
+              %typemap(in, numinputs=0) double numbers[*] "$1 = (double *)calloc($1_dim0, sizeof(double));"
+              %typemap(freearg) double numbers[*] "free($1);"
+              void squares(int n, double numbers[n]);
+
+2026-10-23: wsfulton
+            [C] Fix the .cxx file not compiling for a const function pointer parameter when wrapping C++
+            code, such as:
+
+              int callconst(int (* const f)(int, int), int a, int b);
+
+2026-10-23: wsfulton
+            [C] Fix the .h file not compiling for a global variable declared with a typedef, other than
+            one of a struct or enum, such as:
+
+              typedef int *Integer;
+              Integer (*funcvar4)();
+
+2026-10-23: wsfulton
+            [C] Fix the .h file not compiling for a function pointer parameter or return type when
+            wrapping C++ code, such as:
+
+              int call(int (*f)(int), int i);
+              int (*get_operation())(int, int);
+
+2026-10-23: wsfulton
+            [C] Fix the .h file not compiling for a global variable that is a function pointer or an
+            array of function pointers, such as:
+
+              int (*operation)(int, int);
+              int (*operations[2])(int, int);
+
+2026-10-23: wsfulton
+            [Lua, OCaml, Python, Ruby, Tcl] Fix the wrappers not compiling for an overloaded function
+            with a string literal in the type of a parameter, such as:
+
+              int literal_overload(char text[sizeof("abc")]);
+              int literal_overload(int value);
+
+2026-10-23: wsfulton
+            [C] Fix the wrappers not compiling for an overloaded function with an array parameter whose
+            size is an expression, such as:
+
+              int expression_overload(int values[SIZE + 1]);
+              int expression_overload(int value);
+
+2026-10-23: wsfulton
+            Fix the wrappers not compiling for a type with a string literal in an array dimension,
+            such as the parameter in:
+
+              int literal_text_length(char text[sizeof("abc")]);
+
+2026-10-23: wsfulton
+            [C] Fix the wrappers not compiling for a function returning a function pointer when
+            wrapping C code, such as:
+
+              int (*get_operation(void))(int, int);
+
+            The getter of a function pointer variable with the -namespace option is fixed too.
+
+2026-10-23: wsfulton
+            Fix %contract checks using a member with the same name as a parameter or as the function,
+            or using a parameter's name in a character or string literal, such as:
+
+              %contract f(struct S *s, int n) {
+              require:
+                s->n == n;
+              }
+
+            The generated check did not compile or tested the wrong value. It is now correct.
+
+2026-10-22: wsfulton
+            Fix the noblock=0 attribute of a typemap or %feature, which removed the braces around the
+            code as noblock=1 does. The braces are now kept, as when there is no noblock attribute.
+
 2026-10-22: wsfulton
             [C] Fix the wrapper not compiling for a global array variable when wrapping C code with the
             -namespace option, such as:
@@ -321,6 +445,11 @@ Version 4.6.0 (in progress)
             'int [*]' is used rather than 'const int []' for 'const int a[n]'. The default typemaps are
             looked for in the same order, 'SWIGTYPE [*]' before 'SWIGTYPE []'.
 
+            A typemap written with the size as declared, such as 'const char s[n]' or
+            'const char [n]', is used before any typemap written with '*'. It is used in the same way,
+            so its '$1_dim0' is the size worked out at runtime too. Its size has to be written as
+            declared, so it does not match 'const char s[len]'.
+
             In a multi-argument typemap, an array written with '*', or with a size that refers to an
             earlier parameter of the typemap, only matches a variable length array parameter. Its
             '$2_dim0' and so on are the sizes of that array:
@@ -347,9 +476,8 @@ Version 4.6.0 (in progress)
               %apply ARRAYSOFENUMS[ANY] { name[ANY], name[*] };
 
             The size is only known once the arguments are converted. So it can only be used in the
-            'check', 'argout' and 'freearg' typemaps and in an 'in' typemap without numinputs=0. Using
-            it anywhere else is an error, such as in an 'in' typemap with numinputs=0, a target
-            language typemap or a typemap's local variables or attributes.
+            'in', 'check', 'argout' and 'freearg' typemaps. Using it anywhere else is an error, such
+            as in a target language typemap or a typemap's local variables or attributes.
 
 2026-10-16: vadz
             [Python] Fix "metaclass conflict" TypeError when importing a module with a class using
@@ -372,7 +500,8 @@ Version 4.6.0 (in progress)
               int char_length(int n, const char s[n]);
               double trace(int n, double m[n][n]);
 
-            Typemaps for a fixed size array are no longer used for such a parameter.
+            Typemaps for a fixed size array are no longer used for such a parameter. A typemap
+            written with the size as declared, such as 'const char s[n]', is still used.
 
             *** POTENTIAL INCOMPATIBILITY ***
 

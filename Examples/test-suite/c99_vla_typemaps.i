@@ -194,3 +194,70 @@ void typedef_rows(int n, Row m[n]);
 void typedef_longs(int n, vla_long_t *a) { (void)n; (void)a; }
 void typedef_rows(int n, Row *m) { (void)n; (void)m; }
 %}
+
+// A typemap written with the size as declared is used before one written with '[*]' and has the runtime size too
+
+%typemap(check) const double values[n] "seen[0] = $1_dim0; seen[1] = 1;"
+%typemap(check) const double [n] "seen[0] = $1_dim0; seen[1] = 2;"
+%typemap(check) const double values[*], const double numbers[*] "seen[0] = $1_dim0; seen[1] = 3;"
+%typemap(check) (double data[n], int scale) "seen[0] = $1_dim0; seen[1] = $2;"
+%typemap(check) int (*row)[n] "seen[1] = 4;"
+
+%inline %{
+#if defined(SWIG) || defined(TEST_C99_VLA)
+void declared_named(int n, const double values[n]);
+void declared_unnamed(int n, const double numbers[n]);
+void declared_other(int k, const double values[k]);
+void declared_multi(int n, double data[n], int scale);
+void declared_pointer(int n, int (*row)[n]);
+#endif
+%}
+
+%{
+void declared_named(int n, const double *values) { (void)n; (void)values; }
+void declared_unnamed(int n, const double *numbers) { (void)n; (void)numbers; }
+void declared_other(int k, const double *values) { (void)k; (void)values; }
+void declared_multi(int n, double *data, int scale) { (void)n; (void)data; (void)scale; }
+#if defined(TEST_C99_VLA)
+void declared_pointer(int n, int (*row)[n]) { (void)n; (void)row; }
+#else
+void declared_pointer(int n, const void *row) { (void)n; (void)row; }
+#endif
+%}
+
+// An 'in' typemap with numinputs=0 at the start, in the middle and at the end comes after the earlier arguments are converted
+
+%typemap(in, numinputs=0) int start "$1 = 100;"
+%typemap(in, numinputs=0) int middle[*], int end[*] {
+  int i;
+  $1 = (int *)malloc((size_t)$1_dim0 * sizeof(int));
+  for (i = 0; i < $1_dim0; i++) {
+    $1[i] = 1;
+  }
+}
+%typemap(freearg) int middle[*], int end[*] "free($1);"
+
+#ifdef SWIGC
+// The C target language uses neither these nor a multi-argument 'ctype' typemap when wrapping C, so declares every parameter
+%typemap(ctype) (int start, int n) "int"
+#endif
+
+%inline %{
+#if defined(SWIG) || defined(TEST_C99_VLA)
+int ignored_arguments(int start, int n, int middle[n], int scale, int end[n]);
+#endif
+%}
+
+%{
+#include <stdlib.h>
+
+static int sum(int n, const int *a) {
+  int total = 0;
+  int i;
+  for (i = 0; i < n; i++) {
+    total += a[i];
+  }
+  return total;
+}
+int ignored_arguments(int start, int n, int *middle, int scale, int *end) { return start + scale * sum(n, middle) + sum(n, end); }
+%}

@@ -25,31 +25,6 @@ static String *replaceInitialDash(const String *name) {
   return retval;
 }
 
-static String *getRTypeName(SwigType *t, int *outCount = NULL) {
-  String *b = SwigType_base(t);
-  List *els = SwigType_split(t);
-  int count = 0;
-  int i;
-
-  if (Strncmp(b, "struct ", 7) == 0)
-    Replace(b, "struct ", "", DOH_REPLACE_FIRST);
-
-  for (i = 0; i < Len(els); i++) {
-    String *el = Getitem(els, i);
-    if (Strcmp(el, "p.") == 0 || Strncmp(el, "a(", 2) == 0) {
-      count++;
-      Append(b, "Ref");
-    }
-  }
-  if (outCount)
-    *outCount = count;
-
-  String *tmp = NewString("");
-  char *retName = Char(SwigType_manglestr(t));
-  Insert(tmp, 0, retName);
-  return tmp;
-}
-
 /* --------------------------------------------------------------
  * Tries to get the resolved name, with options of adding
  * or removing a layer of references. Take care not
@@ -585,7 +560,7 @@ String *R::createFunctionPointerHandler(SwigType *t, Node *n, int *numArgs) {
 
   emit_parameter_variables(parms, f);
   emit_return_variable(n, rettype, f);
-  //  emit_attach_parmmaps(parms,f);
+  //  emit_attach_parm_typemaps(parms,f);
 
   /*  Using weird name and struct to avoid potential conflicts. */
   Wrapper_add_local(f, "r_swig_cb_data", "RCallbackFunctionData *r_swig_cb_data = R_SWIG_getCallbackFunctionData()");
@@ -1809,7 +1784,7 @@ int R::functionWrapper(Node *n) {
   Swig_typemap_attach_parms("rtypecheck", l, f);
 
   emit_parameter_variables(l, f);
-  emit_attach_parmmaps(l, f);
+  emit_attach_parm_typemaps(l, f);
   Setattr(n, "wrap:parms", l);
 
   nargs = emit_num_arguments(l);
@@ -1827,9 +1802,7 @@ int R::functionWrapper(Node *n) {
   Parm *curP;
   for (p = l, i = 0; i < nargs; i++) {
 
-    while (checkAttribute(p, "tmap:in:numinputs", "0")) {
-      p = Getattr(p, "tmap:in:next");
-    }
+    p = emit_ignored_in_typemaps(p, f->code);
 
     SwigType *tt = Getattr(p, "type");
     int nargs = -1;
@@ -1978,6 +1951,7 @@ int R::functionWrapper(Node *n) {
     if (funcptr_name)
       Delete(funcptr_name);
   } /* end of looping over parameters. */
+  p = emit_ignored_in_typemaps(p, f->code);
 
   /* Insert constraint checking code */
   for (p = l; p;) {
@@ -2754,28 +2728,12 @@ String *R::processType(SwigType *t, Node *n, int *nargs) {
   if (debugMode)
     Printf(stdout, "processType %s (tdname = %s)(SwigType = %s)\n", Getattr(n, "name"), tmp, Copy(t));
 
-  SwigType *td = t;
   if (expandTypedef(t) && SwigType_istypedef(t)) {
     SwigType *resolved = SwigType_typedef_resolve_all(t);
     if (expandTypedef(resolved)) {
-      td = Copy(resolved);
+      t = Copy(resolved);
     }
   }
-
-  if (!td) {
-    int count = 0;
-    String *b = getRTypeName(t, &count);
-    if (count && b && !Getattr(SClassDefs, b)) {
-      if (debugMode)
-        Printf(stdout, "<processType> Defining class %s\n", b);
-
-      Printf(s_classes, "setClass('%s', contains = 'ExternalReference')\n", b);
-      Setattr(SClassDefs, b, b);
-    }
-  }
-
-  if (td)
-    t = td;
 
   if (SwigType_isfunctionpointer(t)) {
     if (debugMode)
