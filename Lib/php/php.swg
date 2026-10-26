@@ -17,17 +17,6 @@
 
 %include <phpinit.swg> // PHP initialization routine.
 
-/* For swigcommon.swg: raise the error and leave the wrapper */
-%fragment("SWIG_exception_fail", "header") %{
-#define SWIG_exception_fail(code, msg) do { zend_throw_exception( \
-    code == SWIG_TypeError ? zend_ce_type_error : \
-    code == SWIG_ValueError ? zend_ce_value_error : \
-    code == SWIG_DivisionByZero ? zend_ce_division_by_zero_error : \
-    code == SWIG_SyntaxError ? zend_ce_parse_error : \
-    code == SWIG_OverflowError ? zend_ce_arithmetic_error : \
-    code == SWIG_NullReferenceError ? zend_ce_type_error : \
-    NULL, msg, code); SWIG_fail; } while (0)
-%}
 %include <swigcommon.swg>
 
 %include <const.i>
@@ -607,8 +596,8 @@
 %typemap(typecheck,precedence=SWIG_TYPECHECK_STRING) char *, char *&
  " $1 = (Z_TYPE($input) == IS_STRING || Z_TYPE($input) == IS_NULL); "
 
-%typemap(typecheck,precedence=SWIG_TYPECHECK_STRING) char []
- " $1 = (Z_TYPE($input) == IS_STRING); "
+%typemap(typecheck,precedence=SWIG_TYPECHECK_STRING) char [], char [ANY]
+ " $1 = (Z_TYPE($input) == IS_STRING || Z_TYPE($input) == IS_NULL); "
 
 %typecheck(SWIG_TYPECHECK_POINTER) SWIGTYPE
 {
@@ -670,9 +659,9 @@
 
 /* Array reference typemaps */
 %apply SWIGTYPE & { SWIGTYPE ((&)[ANY]) }
-%apply char[ANY] { char (&)[ANY] }
+%apply char[ANY] { char (&)[ANY], char (&&)[ANY] }
 /* Unlike for a char array, NULL is not accepted, as a reference cannot be bound to NULL */
-%typemap(in, phptype="string", fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0])
+%typemap(in, phptype="string", fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0]), char (&&)[ANY] (char temp[$1_dim0])
 %{
    if (Z_TYPE($input) == IS_NULL) {
      zend_type_error("Invalid null reference for argument $argnum of $symname");
@@ -685,13 +674,15 @@
    }
    $1 = &temp;
 %}
-%typemap(out, phptype="string") char (&)[ANY]
+%typemap(out, phptype="string") char (&)[ANY], char (&&)[ANY]
 {
   size_t len = 0;
   while (len < $1_dim0 && (*$1)[len]) ++len;
   RETVAL_STRINGL(*$1, len);
 }
-%apply SWIGTYPE && { SWIGTYPE ((&&)[ANY]) }
+%typemap(typecheck,precedence=SWIG_TYPECHECK_STRING) char (&)[ANY], char (&&)[ANY]
+ " $1 = (Z_TYPE($input) == IS_STRING); "
+%apply SWIGTYPE & { SWIGTYPE ((&&)[ANY]), SWIGTYPE ((&&)[]) }
 
 /* const pointers */
 %apply SWIGTYPE * { SWIGTYPE *const }

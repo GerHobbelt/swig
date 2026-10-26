@@ -145,10 +145,9 @@ same_action_all_primitive_types(in, "$1 = ($1_ltype) $input;", "$1 = &$input;")
 %typemap(in) short * [ANY], int * [ANY], long * [ANY], long long * [ANY], char * [ANY], float * [ANY], double * [ANY] "$1 = ($1_basetype *) $input;"
 
 %typemap(in) enum SWIGTYPE "$1 = ($1_ltype) $input;"
-%typemap(in) enum SWIGTYPE &,enum SWIGTYPE * "$1 = ($1_ltype) $input;"
+%typemap(in) enum SWIGTYPE * "$1 = ($1_ltype) $input;"
 
 %typemap(in) SWIGTYPE [] "$1 = ($1_ltype) $input;"
-%typemap(in) SWIGTYPE ((&)[ANY]) "$1 = ($1_ltype) $input;"
 
 %typemap(in) SWIGTYPE (CLASS::*) {
   if ($input) 
@@ -194,10 +193,6 @@ same_action_all_primitive_types(in, "$1 = ($1_ltype) $input;", "$1 = &$input;")
   if ($input)
     free($input);
 }
-
-%typemap(in) SWIGTYPE &, SWIGTYPE && %{
-    $1 = ($1_ltype) $input;
-%}
 
 // Typemaps for assigning result values to a special return variable
 same_action_all_primitive_types(out, "$result = $1;", "$result = *$1;")
@@ -334,29 +329,21 @@ typedef struct SwigObj SwigObj;
 
 #endif // SWIG_CPPMODE
 
-#ifdef SWIG_C_EXCEPT
-%include "cexcept.swg"
-#else // !SWIG_C_EXCEPT
-// Still define the macro used in some standard typemaps, but we can't
-// implement it in C, so just allow the user predefining their own version.
-%insert("runtime") %{
-#ifndef SWIG_exception
-#define SWIG_exception(code, msg)
-#endif
-%}
-
-// Call any SWIG_exception defined in C above, which is not expanded again inside this macro, then leave the wrapper
-#define SWIG_exception(code, msg) { SWIG_exception(code, msg); return $null; }
-// For swigcommon.swg: the same as SWIG_exception
-#define SWIG_exception_fail(code, msg) SWIG_exception(code, msg)
-#endif // SWIG_C_EXCEPT/!SWIG_C_EXCEPT
-%fragment("SWIG_exception_fail", "header") {}
 %include <swigcommon.swg>
 
-%typemap(memberin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(memberin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
+%typemap(in, noblock=1) SWIGTYPE &, SWIGTYPE &&, SWIGTYPE ((&)[ANY]) {
+  $1 = ($1_ltype) $input;
+  if (!$1) {
+    SWIG_exception(SWIG_NullReferenceError, "$1_type reference is null");
+  }
+}
+
+%define null_checked_reference_in(TM, T, ATTRS)
+%typemap(TM) T &, T &&, T *&, const T *& = SWIGTYPE &;
+%enddef
+
+same_macro_all_primitive_types_but_void(null_checked_reference_in, in);
+%typemap(in) enum SWIGTYPE & = SWIGTYPE &;
 
 %insert("runtime") %{
 #ifdef __cplusplus

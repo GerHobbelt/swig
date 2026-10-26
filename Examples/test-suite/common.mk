@@ -326,6 +326,7 @@ CPP_TEST_CASES += \
 	long_long_apply \
 	memberin_extend \
 	member_funcptr_galore \
+	member_immutable_vars \
 	member_pointer \
 	member_pointer_const \
 	member_template \
@@ -460,6 +461,7 @@ CPP_TEST_CASES += \
 	string_constants \
 	struct_initialization_cpp \
 	struct_value \
+	swig_catch_stdexcept \
 	swig_exception \
 	symbol_clash \
 	sym \
@@ -684,6 +686,7 @@ CPP11_TEST_CASES += \
 	cpp11_rvalue_reference \
 	cpp11_rvalue_reference2 \
 	cpp11_rvalue_reference3 \
+	cpp11_rvalue_reference_array \
 	cpp11_rvalue_reference_move \
 	cpp11_shared_ptr_const \
 	cpp11_shared_ptr_crtp_upcast \
@@ -962,6 +965,7 @@ C_TEST_CASES += \
 	string_simple \
 	struct_rename \
 	struct_initialization \
+	swig_exception_default \
 	typedef_classforward_same_name \
 	typedef_struct \
 	typemap_subst \

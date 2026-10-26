@@ -54,7 +54,7 @@
   $1 = *(($1_ltype)SWIG_MustGetPtr($input, $descriptor, 1, 0));
 }
 
-%typemap(varin) SWIGTYPE [] {
+%typemap(varin) SWIGTYPE [], SWIGTYPE (&)[], SWIGTYPE (&&)[] {
   scm_wrong_type_arg(FUNC_NAME, 1, $input);
 }
 
@@ -525,7 +525,7 @@ typedef unsigned long SCM;
   $1 = SCM_CHARP($input) ? 1 : 0;
 }
 
-%typecheck(SWIG_TYPECHECK_STRING) char * {
+%typecheck(SWIG_TYPECHECK_STRING) char *, char [], char [ANY] {
   $1 = scm_is_string($input) ? 1 : 0;
 }
 
@@ -556,8 +556,10 @@ typedef unsigned long SCM;
 /* Array reference typemaps */
 %apply SWIGTYPE & { SWIGTYPE ((&)[ANY]) }
 %typemap(varin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%apply char[ANY] { char (&)[ANY] }
-%apply SWIGTYPE && { SWIGTYPE ((&&)[ANY]) }
+%apply char[ANY] { char (&)[ANY], char (&&)[ANY] }
+%apply SWIGTYPE & { SWIGTYPE ((&&)[ANY]), SWIGTYPE ((&&)[]) }
+%typemap(varin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
+%typemap(varin) SWIGTYPE ((&&)[]) = SWIGTYPE [];
 
 /* const pointers */
 %apply SWIGTYPE * { SWIGTYPE *const }

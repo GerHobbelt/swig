@@ -42,10 +42,16 @@
 
 %typemap(in) SWIGTYPE & {
     $1 = ($ltype) caml_ptr_val($input,$1_descriptor);
+    if (!$1) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    }
 }
 
 %typemap(in, fragment="<memory>") SWIGTYPE && (std::unique_ptr<$*1_ltype> rvrdeleter) %{
     $1 = ($ltype) caml_ptr_val($input,$1_descriptor);
+    if (!$1) {
+        SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
+    }
     rvrdeleter.reset($1);
 %}
 
@@ -337,7 +343,7 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
     }
 %}
 
-%typemap(varin, warning=SWIGWARN_TYPEMAP_VARIN_UNDEF_MSG) SWIGTYPE [] %{
+%typemap(varin, warning=SWIGWARN_TYPEMAP_VARIN_UNDEF_MSG) SWIGTYPE [], SWIGTYPE (&)[], SWIGTYPE (&&)[] %{
     caml_failwith("read-only $name");
 %}
 
@@ -418,12 +424,10 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
 
 /* Array reference typemaps */
 %apply SWIGTYPE & { SWIGTYPE ((&)[ANY]) }
-%typemap(memberin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
 %typemap(varin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%apply char[ANY] { char (&)[ANY] }
+%apply char[ANY] { char (&)[ANY], char (&&)[ANY] }
 /* Unlike for a char array, NULL is not accepted, as a reference cannot be bound to NULL */
-%typemap(in, fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0]) {
+%typemap(in, fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0]), char (&&)[ANY] (char temp[$1_dim0]) {
     char *str = caml_string_val($input);
     if (!str) {
         SWIG_OCamlThrowException(SWIG_OCamlNullReferenceException, "$1_type is null");
@@ -433,9 +437,9 @@ SIMPLE_MAP(unsigned long long,caml_val_ulong,caml_long_val);
     }
     $1 = ($1_ltype)temp;
 }
-%apply SWIGTYPE && { SWIGTYPE ((&&)[ANY]) }
-%typemap(memberin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
+%apply SWIGTYPE & { SWIGTYPE ((&&)[ANY]), SWIGTYPE ((&&)[]) }
+%typemap(varin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
+%typemap(varin) SWIGTYPE ((&&)[]) = SWIGTYPE [];
 
 /* const pointers */
 %apply SWIGTYPE * { SWIGTYPE *const }

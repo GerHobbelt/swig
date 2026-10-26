@@ -262,7 +262,7 @@ std::ptrdiff_t *INOUT
 %define %r_char_ptr_array_variable(METHOD)
 %typemap(METHOD,canthrow=1,noblock=1,fragment="<string.h>") char *[ANY] {
   if (!$input) {
-    SWIG_exception_fail(SWIG_NullReferenceError, "invalid null reference in variable '$name' of type '$1_type'");
+    SWIG_exception(SWIG_NullReferenceError, "invalid null reference in variable '$name' of type '$1_type'");
   } else {
     size_t ii;
     for (ii = 0; ii < (size_t)$1_dim0; ii++) {
@@ -373,6 +373,18 @@ x
 
 setAs('ExternalReference', 'character',
 function(from) {if (!is.null(from$"__str__")) from$"__str__"()})
+
+# A class's $ and $<- methods call these for a name that is not a member variable or method, or is read only
+setMethod('$', "ExternalReference",
+function(x, name) NULL)
+
+setMethod('$<-', "ExternalReference",
+function(x, name, value)
+stop("Unable to set '", name, "' of ", class(x)[1], ", as it is read only or not a member variable"))
+
+setMethod('[[<-', c("ExternalReference", "character"),
+function(x, i, j, ..., value)
+stop("Unable to set '", i, "' of ", class(x)[1], ", as it is read only or not a member variable"))
 
 suppressMessages(suppressWarnings(setMethod('print', 'ExternalReference',
 function(x) {print(as(x, "character"))})))

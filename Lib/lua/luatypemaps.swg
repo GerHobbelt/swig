@@ -342,7 +342,7 @@ parameters match which function
   $1 = SWIG_lua_isnilstring(L,$input) && (lua_rawlen(L,$input)==1);
 }
 
-%typecheck(SWIG_TYPECHECK_STRING,fragment="SWIG_lua_isnilstring") char *, char[], char *&, const char *& {
+%typecheck(SWIG_TYPECHECK_STRING,fragment="SWIG_lua_isnilstring") char *, char[], char[ANY], char *&, const char *& {
   $1 = SWIG_lua_isnilstring(L,$input);
 }
 
@@ -410,9 +410,9 @@ parameters match which function
 
 // Array reference typemaps
 %apply SWIGTYPE & { SWIGTYPE ((&)[ANY]) }
-%apply char[ANY] { char (&)[ANY] }
+%apply char[ANY] { char (&)[ANY], char (&&)[ANY] }
 /* Unlike for a char array, nil is not accepted, as a reference cannot be bound to NULL */
-%typemap(in,checkfn="lua_isstring",fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0])
+%typemap(in,checkfn="lua_isstring",fragment="SWIG_CopyCharArray") char (&)[ANY] (char temp[$1_dim0]), char (&&)[ANY] (char temp[$1_dim0])
 %{{
     size_t len = 0;
     const char *str = lua_tolstring(L, $input, &len);
@@ -422,7 +422,10 @@ parameters match which function
     }
     $1 = ($ltype)temp;
   }%}
-%apply SWIGTYPE && { SWIGTYPE ((&&)[ANY]) }
+%typecheck(SWIG_TYPECHECK_STRING) char (&)[ANY], char (&&)[ANY] {
+  $1 = lua_isstring(L,$input);
+}
+%apply SWIGTYPE & { SWIGTYPE ((&&)[ANY]), SWIGTYPE ((&&)[]) }
 
 /* const pointers */
 %apply SWIGTYPE * { SWIGTYPE *const }

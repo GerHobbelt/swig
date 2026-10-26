@@ -1721,8 +1721,8 @@ does SWIG have any indication of how large an array should be. However with the 
 arrays for convenient usage.</p>
 
 <p>Given the functions:</p>
-<div class="code"><pre>extern void sort_int(int* arr, size_t len);
-extern void sort_double(double* arr, size_t len);
+<div class="code"><pre>extern void sort_int(int* arr, int len);
+extern void sort_double(double* arr, int len);
 </pre></div>
 
 <p>There are basically two ways that SWIG can deal with this. The first way, uses the <tt>&lt;carrays.i&gt;</tt> library
@@ -1738,13 +1738,13 @@ More details can be found in the <a href="Library.html#Library_carrays">carrays.
 // this declares a batch of functions for manipulating C integer arrays
 %array_functions(int, int)
 
-extern void sort_int(int* arr, size_t len); // the function to wrap
+extern void sort_int(int* arr, int len); // the function to wrap
 
 // using typemaps
 %include &lt;typemaps.i&gt;
-%apply (double *INOUT, int) {(double* arr, size_t len)};
+%apply (double *INOUT, int) {(double* arr, int len)};
 
-extern void sort_double(double* arr, size_t len); // the function to wrap
+extern void sort_double(double* arr, int len); // the function to wrap
 </pre></div>
 
 <p>Once wrapped, the functions can both be called, though with different ease of use:</p>
@@ -1776,6 +1776,21 @@ to a C-array. The <tt>%luacode</tt> directive is good for this. See SWIG\Example
 and Lua tables to be 1..N, (the indexing follows the norm for the language). In the typemap when it converts the table to an array it quietly changes the indexing accordingly. Take note of this behaviour if you have a C function which returns indexes.</p>
 
 <p>Note: SWIG also can support arrays of pointers in a similar manner.</p>
+
+<p>
+<tt>nil</tt> instead of a table is passed to the function as a NULL array, as for any other array parameter.
+The length of a variable size array is then 0 and an INOUT array gives back <tt>nil</tt>.
+To raise an error for <tt>nil</tt> instead, add a <tt>check</tt> typemap for the array parameter:
+</p>
+
+<div class="code"><pre>
+%typemap(check) double *arr %{
+  if (!$1) {
+    SWIG_Lua_pusherrstring(L, "expected a table");
+    SWIG_fail;
+  }
+%}
+</pre></div>
 
 <H3><a name="Lua_typemaps_ptr_ptr_functions">31.4.4 Typemaps and pointer-pointer functions</a></H3>
 

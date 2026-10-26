@@ -9,16 +9,7 @@
 /* Code insertion directives */
 #define %go_import(...) %insert(go_imports) %{__VA_ARGS__%}
 
-/* For swigcommon.swg: raise the error, which panics. In the runtime section, where go.cxx looks for _swig_gopanic. */
-%fragment("SWIG_exception_fail", "runtime") %{
-#define SWIG_exception_fail(code, msg) _swig_gopanic(msg)
-%}
 %include <swigcommon.swg>
-
-%typemap(memberin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&)[ANY]) = SWIGTYPE [ANY];
-%typemap(memberin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
-%typemap(globalin) SWIGTYPE ((&&)[ANY]) = SWIGTYPE [ANY];
 
 /* Basic types */
 
@@ -376,7 +367,12 @@
 %{$gotypename%}
 
 %typemap(in) SWIGTYPE &
-%{ $1 = *($&1_ltype)&$input; %}
+%{
+  $1 = *($&1_ltype)&$input;
+  if (!$1) {
+    _swig_gopanic("Attempt to dereference null $1_type");
+  }
+%}
 
 %typemap(out) SWIGTYPE &
 %{ *($&1_ltype)&$result = $1; %}
@@ -400,8 +396,13 @@
 %{$gotypename%}
 
 %typemap(in, fragment="<memory>") SWIGTYPE && (std::unique_ptr<$*1_ltype> rvrdeleter)
-%{ $1 = *($&1_ltype)&$input;
-rvrdeleter.reset($1); %}
+%{
+  $1 = *($&1_ltype)&$input;
+  if (!$1) {
+    _swig_gopanic("Attempt to dereference null $1_type");
+  }
+  rvrdeleter.reset($1);
+%}
 
 %typemap(out) SWIGTYPE &&
 %{ *($&1_ltype)&$result = $1; %}
@@ -520,7 +521,7 @@ rvrdeleter.reset($1); %}
 %typemap(directorout, warning=SWIGWARN_TYPEMAP_DIRECTOROUT_PTR_MSG) char *, char *&, char[ANY], char[]
 %{ $result = ($1_ltype)$input.p; %}
 
-%apply char[ANY] { char (&)[ANY] }
+%apply char[ANY] { char (&)[ANY], char (&&)[ANY] }
 
 /* String & length */
 
@@ -841,6 +842,7 @@ rvrdeleter.reset($1); %}
 %apply SWIGTYPE * { SWIGTYPE *const }
 %apply SWIGTYPE (CLASS::*) { SWIGTYPE (CLASS::*const) }
 %apply SWIGTYPE & { SWIGTYPE (CLASS::*const&) }
+%apply SWIGTYPE & { SWIGTYPE ((&&)[ANY]), SWIGTYPE ((&&)[]) }
 
 /* Go keywords.  */
 %include <gokw.swg>

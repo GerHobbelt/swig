@@ -1,9 +1,12 @@
 /* -----------------------------------------------------------------------------
- * clabels.swg
+ * exception.swg
  *
- * Exception handling code and typemaps for C module.
+ * Defines SWIG_exception(code, msg), the SWIG_exception fragment with any support code that it needs and the throws typemaps for C++ exceptions.
+ * SWIG_exception raises the target language error for a SWIG error code and leaves the wrapper function.
+ * Included by swigcommon.swg.
  * ----------------------------------------------------------------------------- */
 
+#ifdef SWIG_C_EXCEPT
 // This function is special: it's used by various typemaps (via SWIG_exception
 // macro below) and needs to be defined, but we don't want to export it.
 %ignore SWIG_CException_Raise;
@@ -17,6 +20,8 @@ extern "C" SWIGEXPORTC void SWIG_CException_Raise(int code, const char* msg);
 //
 // It has to be seen by SWIG because we want to generate wrappers for its
 // public functions to be able to use it from the application code.
+// It is wrapped before c.swg defines the 'SWIGTYPE &' in typemap, which uses SWIG_exception from this file.
+%typemap(in) const SWIG_CException & "$1 = ($1_ltype) $input;"
 %inline %{
 #ifndef SWIG_CException_DEFINED
 class SWIG_CException {
@@ -95,9 +100,8 @@ template <typename T> T swig_check(T x) {
 
 #endif // SWIG_CXX_WRAPPERS
 
-// For swigcommon.swg: raise the error and leave the wrapper
-#define SWIG_exception_fail(code, msg) { SWIG_CException_Raise(code, msg); return $null; }
-#define SWIG_exception(code, msg) SWIG_exception_fail(code, msg)
+// Raise the error for a SWIG error code and leave the wrapper
+#define SWIG_exception(code, msg) { SWIG_CException_Raise(code, msg); return $null; }
 
 %typemap(throws, noblock="1") char *, const char * {
   SWIG_exception(SWIG_RuntimeError, $1);
@@ -106,3 +110,17 @@ template <typename T> T swig_check(T x) {
 %typemap(throws, noblock="1") SWIGTYPE {
   SWIG_exception(SWIG_UnknownError, "exception of type $1_type");
 }
+
+#else // !SWIG_C_EXCEPT
+// Still define the macro used in some standard typemaps, but we can't
+// implement it in C, so just allow the user predefining their own version.
+%insert("runtime") %{
+#ifndef SWIG_exception
+#define SWIG_exception(code, msg)
+#endif
+%}
+
+// Call any SWIG_exception defined in C above, which is not expanded again inside this macro, then leave the wrapper
+#define SWIG_exception(code, msg) { SWIG_exception(code, msg); return $null; }
+#endif // SWIG_C_EXCEPT/!SWIG_C_EXCEPT
+%fragment("SWIG_exception", "header") {}
