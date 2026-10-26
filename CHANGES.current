@@ -7,6 +7,170 @@ the issue number to the end of the URL: https://github.com/swig/swig/issues/
 Version 4.6.0 (in progress)
 ===========================
 
+2026-10-18: wsfulton
+            [C] The SWIG error codes, such as SWIG_ValueError, are now defined in the generated header, so
+            C code can check the error code of a pending exception by name, for example:
+
+              if (SWIG_CException_code_get(ex) == SWIG_ValueError) {...}
+
+            Before, the number had to be used instead, such as -9.
+
+2026-10-17: wsfulton
+            [C] #3588 Fix a memory leak when an error is raised after an 'in' typemap has allocated memory.
+            SWIG_exception left the wrapper without running the 'freearg' typemaps that release the memory.
+            SWIG_exception now leaves the wrapper with the new SWIG_fail macro, which jumps to a fail label
+            at the end of the wrapper. The code after the label runs the 'freearg' typemaps and then returns.
+            SWIG_fail can also be used directly in a typemap to leave the wrapper after an error.
+
+            A typemap using SWIG_exception or SWIG_fail must now have the canthrow attribute, which
+            generates the fail label, for example:
+
+              %typemap(check, canthrow=1) int positive {
+                if ($1 <= 0)
+                  SWIG_exception(SWIG_ValueError, "positive value expected");
+              }
+
+            Without it, the wrapper does not compile. Warning 762 is given if SWIG_exception or SWIG_fail is
+            found in a wrapper without the canthrow attribute. The warning cannot be relied on though, as other
+            ways of jumping to the fail label are not found, such as a macro that uses SWIG_fail.
+
+            %exception and %exceptionvar have the canthrow attribute set, as do the library typemaps that
+            raise an error.
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-17: wsfulton
+            [C#, D] Fix missing warning for SWIG_exception used without the canthrow attribute, such as
+            in this typemap:
+
+              %typemap(check) int number {
+                if ($1 < 0)
+                  SWIG_exception(SWIG_ValueError, "only positive numbers accepted");
+              }
+
+            The exception was not thrown, as the proxy method did not check for a pending exception,
+            yet no warning was given. Now warning 845 (C#) or 711 (D) is given, as it already was for
+            SWIG_CSharpSetPendingException and SWIG_DSetPendingException. Add canthrow=1 to fix it.
+
+2026-10-17: wsfulton
+            [C#, D] Fix %exceptionvar code that raises an exception when a variable is accessed, such as:
+
+              %exceptionvar number {
+                $action
+                if (number < 0)
+                  SWIG_exception(SWIG_ValueError, "number is negative");
+              }
+
+            Before, the variable's getter and setter did not check for the pending exception, so the
+            exception was not thrown. Now it is thrown, as it is for %exception code.
+
+2026-10-16: vadz
+            [Python] Fix "metaclass conflict" TypeError when importing a module with a class using
+            the nondynamic feature that derives from a nondynamic class from another module.
+
+2026-10-16: vadz
+            [Python] Fix accessing the elements of a wrapped STL container of a class using the
+            nondynamic feature, which raised AttributeError.
+
+2026-10-16: vadz
+            [Python] Setting a property of a class using the nondynamic feature no longer calls its
+            getter, so it works even when the getter throws, e.g. because the value is not set yet.
+
+2026-10-15: wsfulton
+            Fix a template argument containing a '.', such as a floating point literal, a member
+            access or a C++20 designated initializer, which was scrambled in the generated code so
+            that it did not compile:
+
+              struct Point { int x, y; };
+              constexpr Point s{1, 2};
+              template<double D> struct DoubleValue {...};
+              template<int N> struct IntValue {...};
+              template<Point P> struct PointValue {...};
+
+              %template(D) DoubleValue<1.5>;            // was DoubleValue< 5 1. >
+              %template(X) IntValue<s.x>;               // was IntValue< x s. >
+              %template(P) PointValue<Point{.x = 1}>;   // was PointValue< x = 1} Point{. >
+
+            Also fix a default argument value such as 's.y' becoming 's.int' when 'typedef int y;'
+            is in scope and %feature("compactdefaultargs") is used.
+
+2026-10-15: wsfulton
+            Add support for C++11 default template arguments in function templates. %template can now
+            leave out the template arguments that have defaults, as for a class template, such as:
+
+              template<typename T, typename U = int> int value(T t) { return 1; }
+              %template(value_int) value<int>;
+
+            Previously %template gave the error "No matching function template" unless every template
+            argument was given. For an overloaded function template, an overload needing a default was
+            left out instead, with no error if another overload took the template arguments. Such an
+            overload is now instantiated too, as C++ also considers it. Its wrapper does not compile if
+            its body does not work for the template arguments, such as the first area in:
+
+              template<typename T, typename U = void> int area(T *shape) { return shape->area(); }
+              template<typename T> int area(T side) { return side * side; }
+              %template(area) area<int>;
+
+            which is now also instantiated as 'int area(int *shape)' using the default for U. Its body
+            does not compile as int has no area() member. To wrap only the second area as before,
+            ignore the first one:
+
+              %ignore area<int>(int *);
+              %template(area) area<int>;
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-15: wsfulton
+            %template on an overloaded function template now instantiates only the overloads whose
+            template parameters take the template arguments: a type for a type template parameter, a
+            value for a non-type template parameter and a template for a template template parameter.
+            Previously every overload with as many template parameters as template arguments was
+            instantiated, whatever the kind of argument. The wrapper did not compile when the parameter
+            or return types of such an overload used a template parameter given the wrong kind of
+            argument, such as the value 10 for the type template parameter T in:
+
+              template<typename T> T kindp(T t) { return t; }
+              template<int N> int kindp(int i) { return N + i; }
+              %template(kindp_10) kindp<10>;
+
+            which also instantiated the first kindp as '10 kindp(10 t)'. A type for a non-type template
+            parameter failed in the same way, such as int for N in an 'int (&a)[N]' parameter.
+
+            A template parameter with a type not declared to SWIG, such as 'std::size_t N' without a
+            typedef for size_t, takes any template argument, as the name could also be a concept
+            constraining a type template parameter.
+
+2026-10-15: wsfulton
+            Function templates differing only in their template parameters are now overloads, as in C++.
+            They were taken to be a redefinition, giving Warning 302 and ignoring the later function
+            template, so %template instantiated the earlier one instead. For example:
+
+              template<typename T> T make() { return T(); }
+              template<int N> int make() { return N; }
+              %template(make_5) make<5>;
+
+            instantiated the first make as '5 make()', which did not compile.
+
+2026-10-14: wsfulton
+            [C, C#, D, Go, Guile, Java, Lua, PHP] An exception caught by the catch all handler that
+            %catches(...) adds is now raised as a SWIG_RuntimeError with the message "unknown exception",
+            as in the other target languages. Before, it was rethrown with warning 468 unless the interface
+            file included exception.i. To rethrow it as before, add this to the interface file:
+
+              %typemap(throws) (...) "throw;"
+
+            *** POTENTIAL INCOMPATIBILITY ***
+
+2026-10-14: wsfulton
+            %include <exception.i> is no longer needed and the file now does nothing. The 'throws' typemap
+            for '...' used by %catches(...) is now always available. Every C++ wrapper now includes the
+            <stdexcept> and <typeinfo> headers needed by SWIG_CATCH_STDEXCEPT and SWIG_CATCH_UNKNOWN.
+
+2026-10-14: wsfulton
+            [Guile] A global variable that is an array of unknown size, such as 'extern int b[];' or
+            'extern char name[];', now gives warning 462, as in the other target languages. Setting it
+            still raises wrong-type-arg.
+
 2026-10-14: wsfulton
             [Python] Fix a memory leak with -castmode of a std::pair made from a tuple whose first element
             is converted with a cast of higher rank than its second, such as a float for an int.
@@ -577,10 +741,11 @@ Version 4.6.0 (in progress)
 2026-10-07: wsfulton
             Fix the value of a wide string literal holding a character that is not ASCII, such as
             L"\x263A", L"\u00E9" or the character written as itself, used for a constant or
-            default argument. A hexadecimal escape sequence from 0x100 to 0x10FFFF was truncated to a
-            single byte. An octal one above \377 gave an "octal escape sequence out of range" error. Any
-            other such character became a wide character for each byte of its UTF-8 encoding. Also
-            fix the array size deduced for an auto or decltype(auto) variable initialised by such a
+            default argument. A hexadecimal escape sequence above 0xFF was truncated to a single
+            byte, including one beyond Unicode, such as L"\x110000", which a 32 bit wchar_t holds.
+            An octal one above \377 gave an "octal escape sequence out of range" error. Any other
+            such character became a wide character for each byte of its UTF-8 encoding. Also fix
+            the array size deduced for an auto or decltype(auto) variable initialised by such a
             literal, such as 'auto &s = L"\u00E9";', which counted the UTF-8 bytes.
 
 2026-10-07: wsfulton
@@ -711,8 +876,7 @@ Version 4.6.0 (in progress)
                 char text[];
               };
 
-            Setting it used strcpy, writing past the end of the array for a longer string. In Guile,
-            this is for a member, as such a global variable could already not be set.
+            Setting it used strcpy, writing past the end of the array for a longer string.
 
             *** POTENTIAL INCOMPATIBILITY ***
 

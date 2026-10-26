@@ -420,9 +420,7 @@ static int is_operator(String *name) {
  *
  *   TPC_REMAP    candidate and the symbol resolves to a concept (for a
  *                template-id like 'Pair<int>' the bare prefix 'Pair' is the
- *                symbol that must resolve to a concept), or is not declared
- *                in the current scope, being almost certainly a concept that
- *                has not been made visible to SWIG
+ *                symbol that must resolve to a concept)
  *                -> rewrite the parm to 'typename T' (or 'v.typename Ts...')
  *                   and attach a concept-id constraint atom carrying the full
  *                   (possibly template-id) concept-id string
@@ -432,8 +430,17 @@ static int is_operator(String *name) {
  *                  template<Numeric... Ts>              int count(Ts...);
  *                  template<std::convertible_to<int> T> T as_int(T x);    // template-id is a concept, whether or not SWIG has parsed its definition
  *                  template<Pair<int> T>                T first_int(T x); // template-id is a concept (not a class)
+ *   TPC_REMAP_UNDECLARED
+ *                candidate and the symbol is not declared in the current scope,
+ *                most likely a concept that has not been made visible to SWIG
+ *                -> as for TPC_REMAP, but the name could instead be the type of a
+ *                   non-type parameter, such as a typedef SWIG has not seen or an
+ *                   earlier template parameter
+ *                Examples:
  *                  template<MisspeltConcept T>          T f(T);           // not declared, such as a typo
  *                  template<UndeclaredConcept<int> T>   T g(T);           // template-id, prefix not declared
+ *                  template<std::size_t N>              int h();          // typedef not declared
+ *                  template<typename T, T V>            T k();            // type of an earlier template parameter
  *   TPC_KEEP     not a candidate, or the symbol resolves to a type (non-concept)
  *                (typedef, class, enum) -> leave as a non-type parameter
  *                Examples:
@@ -446,7 +453,8 @@ static int is_operator(String *name) {
  */
 enum {
   TPC_KEEP = 0,
-  TPC_REMAP = 1
+  TPC_REMAP = 1,
+  TPC_REMAP_UNDECLARED = 2
 };
 static int classify_template_param_type(const SwigType *type) {
   SwigType *probe;
@@ -486,7 +494,9 @@ static int classify_template_param_type(const SwigType *type) {
     n = Swig_symbol_clookup(probe, 0);
   }
   templatetype = n ? Getattr(n, "templatetype") : 0;
-  if (!n || (templatetype && Equal(templatetype, "concept"))) {
+  if (!n) {
+    verdict = TPC_REMAP_UNDECLARED;
+  } else if (templatetype && Equal(templatetype, "concept")) {
     verdict = TPC_REMAP;
   } else {
     verdict = TPC_KEEP;
@@ -2118,10 +2128,12 @@ static String *add_qualifier_to_declarator(SwigType *type, SwigType *qualifier) 
     String     *text;
     struct BracketDepth depth;
   } group;
-  /* A string or character literal: its decoded text and its encoding prefix, a SWIG_LITERAL_* value. */
+  /* A string or character literal: its decoded text, its encoding prefix, a SWIG_LITERAL_* value, and for an ordinary
+   * string literal, its text as a wide literal, from Scanner_literal_wide_text(), or 0 if that is the same. */
   struct Literal {
     String     *text;
     int         prefix;
+    String     *widetext;
   } literal;
   Parm         *p;
   ParmList     *pl;
@@ -3040,12 +3052,26 @@ static int literal_prefix_rank(int prefix) {
 }
 
 /* Append the string literal 'piece' to 'run', the adjacent string literals before it, which make one literal.  Its
-   prefix is the first of the highest rank, the u8 of both u8"a" u8"b" and R"(a)" u8"b". */
+   prefix is the first of the highest rank, the u8 of both u8"a" u8"b" and R"(a)" u8"b". Ordinary string literals
+   joined to a wide one make a wide literal, so their wide text is used, in which a numeric escape sequence above 0x7F
+   is one wide character, as it is in a wide literal, rather than one byte of a UTF-8 encoding. */
 static void append_string_literal(struct Literal *run, struct Literal piece) {
-  Append(run->text, piece.text);
+  int run_wide = literal_encoding(run->prefix) == SWIG_LITERAL_WIDE;
+  int piece_wide = literal_encoding(piece.prefix) == SWIG_LITERAL_WIDE;
+  if (piece_wide && !run_wide && run->widetext) {
+    Delete(run->text);
+    run->text = run->widetext;
+    run->widetext = 0;
+  } else if (!piece_wide && !run_wide && (run->widetext || piece.widetext)) {
+    if (!run->widetext)
+      run->widetext = Copy(run->text);
+    Append(run->widetext, piece.widetext ? piece.widetext : piece.text);
+  }
+  Append(run->text, run_wide && piece.widetext ? piece.widetext : piece.text);
   if (literal_prefix_rank(piece.prefix) > literal_prefix_rank(run->prefix))
     run->prefix = piece.prefix;
   Delete(piece.text);
+  Delete(piece.widetext);
 }
 
 /* The array type of the string literal initialiser 'dtype', such as 'const char [5]' for "text", the bound counting the
@@ -3420,24 +3446,26 @@ static void add_array_from_scanner(SwigType *type) {
   Delete(bound);
 }
 
-/* Decode the UTF-8 'text' that the scanner stores for a wide character literal, returning the code point of its single
-   character, or -1 if 'text' is not a single character. A hexadecimal or octal escape sequence or a universal
+/* Decode the UTF-8 'text' that the scanner stores for a wide character literal, setting 'code_point' to the code point
+   of its single character and returning 1, or returning 0 if 'text' is not a single character. A hexadecimal escape
+   sequence can also give a value beyond Unicode, up to 0xFFFFFFFF. A hexadecimal or octal escape sequence or a universal
    character name in the literal is encoded as UTF-8 by Swig_utf8_encode() in the scanner, while a character written as
    itself is copied unchanged from the source file, so it is UTF-8 only in a UTF-8 source file. Either way, an ASCII
    character is a single char. A code point is the number Unicode assigns to a character and is the value of a wide
    character literal holding it. For example:
 
-     Literal                                         'text' (UTF-8 bytes)   Returns
+     Literal                                         'text' (UTF-8 bytes)   code_point
      L'A', L'\x41' or L'\u0041'                      41                     0x41
      L'\xF1', L'\u00F1' or the n with tilde itself   C3 B1                  0xF1
      L'\x263A', L'\u263A' or the smiley face itself  E2 98 BA               0x263A
 */
-static long wide_char_code_point(String *text) {
+static int wide_char_code_point(String *text, unsigned long *code_point) {
   int len = Len(text);
-  long code_point;
-  if (len == 1)
-    return (unsigned char)Char(text)[0];
-  return len > 0 && Swig_utf8_decode(text, 0, &code_point) == len ? code_point : -1;
+  if (len == 1) {
+    *code_point = (unsigned char)Char(text)[0];
+    return 1;
+  }
+  return len > 0 && Swig_utf8_decode(text, 0, code_point) == len;
 }
 
 static Node *new_enum_node(SwigType *enum_base_type) {
@@ -6889,7 +6917,7 @@ templateparameter : templcpptype type_id_default {
                        * parameter. */
                       SwigType *t = Getattr(p, "type");
                       int verdict = t ? classify_template_param_type(t) : TPC_KEEP;
-                      if (verdict == TPC_REMAP) {
+                      if (verdict != TPC_KEEP) {
                         /* In keeping with SWIG's "best effort wrap on partial type information" policy,
                          * an identifier that is not declared is handled the same way as a confirmed concept:
                          * rewrite the parm to 'typename T' and attach the captured concept-id as a constraint
@@ -6914,6 +6942,9 @@ templateparameter : templcpptype type_id_default {
                         Setattr(atom, "type", concept_name);
                         Setattr(p, "constraint", atom);
                         Setattr(p, "type", new_type);
+                        /* Not known to be a type parameter, as the name may be the type of a non-type parameter */
+                        if (verdict == TPC_REMAP_UNDECLARED)
+                          SetFlag(p, "undeclaredconstraint");
                         Delete(new_type);
                         Delete(concept_name);
                       }
@@ -7821,6 +7852,8 @@ valparm        : parm {
 			  if (value) {
 			    String *v = Copy(value);
 			    Setattr($parm,"type",v);
+                            /* The "type" is now the variable's value, an argument for a non-type template parameter */
+                            SetFlag($parm, "variablevalue");
 			    Delete(v);
 			    n = 0;
 			  }
@@ -9149,14 +9182,16 @@ edecl          :  identifier {
 		   SetFlag($$,"feature:immutable");
 		   Setattr($$,"enumvalue", $etype.val);
 		   if ($etype.stringval) {
-                     long code_point = $etype.type == T_WCHAR ? wide_char_code_point($etype.stringval) : -1;
-                     if (code_point >= 0) {
-                       /* A wide character is also given as a number, the only portable form when it is not ASCII */
-                       String *numval = NewStringf("%ld", code_point);
+                     unsigned long code_point = 0;
+                     int one_char = $etype.type == T_WCHAR && wide_char_code_point($etype.stringval, &code_point);
+                     /* A wide character is also given as a number, the only portable form when it is not ASCII, but
+                        not above 0x7FFFFFFF, which is negative with a signed 32 bit wchar_t */
+                     if (one_char && code_point <= 0x7FFFFFFF) {
+                       String *numval = NewStringf("%lu", code_point);
                        Setattr($$, "enumnumval", numval);
                        Delete(numval);
                      }
-                     if (code_point <= 0x7F)
+                     if (!one_char || code_point <= 0x7F)
                        Setattr($$, "enumstringval", $etype.stringval);
 		   }
 		   if ($etype.numval) {
@@ -9475,10 +9510,11 @@ exprsimple     : exprnum
 		  }
 	       }
 	       | WCHARCONST {
-                  long code_point = wide_char_code_point($WCHARCONST.text);
+                  unsigned long code_point;
+                  int one_char = wide_char_code_point($WCHARCONST.text, &code_point);
 		  $$ = default_dtype;
                   $$.stringval = $WCHARCONST.text;
-                  if (code_point > 0x7F) {
+                  if (one_char && code_point > 0x7F) {
                     /* Not ASCII, so the scanned text is a UTF-8 encoding that must not be escaped byte by byte */
                     $$.val = NewStringf("L'\\x%lX'", code_point);
                   } else {
@@ -9777,6 +9813,7 @@ exprnum        :  NUM_INT
 
 exprstring     : string_literal {
                  $$ = default_dtype;
+                 Delete($string_literal.widetext);
                  $$.stringval = $string_literal.text;
                  $$.val = NewStringf("\"%(escape)s\"", $string_literal.text);
                  $$.type = T_STRING;
@@ -10530,6 +10567,7 @@ idcolontailnt   : DCOLON identifier idcolontailnt[in] {
 
 /* Concatenated strings.  A directive only needs the text, while an expression also needs the encoding prefix. */
 string         : string_literal {
+                   Delete($string_literal.widetext);
                    $$ = $string_literal.text;
                }
                ;
